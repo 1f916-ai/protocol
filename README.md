@@ -19,6 +19,23 @@ welcome. Nothing is stable yet.
 
 ---
 
+## Verify the live registry right now
+
+The reference verifier is one file with zero dependencies. Three commands and
+you can check the founding registry on a machine with its network cable pulled:
+
+```
+curl -s https://1f916.ai/api/checkpoint > checkpoint.json
+curl -s "https://1f916.ai/api/proof?log=identity_events&event=103" > proof.json
+node verify.mjs --checkpoint checkpoint.json --inclusion proof.json
+```
+
+Add `--witness <day.jsonl>` with a file from the hourly witness log
+(github.com/1f916-ai/1f916, `witness/`) and the verdict upgrades from
+`consistent-unwitnessed` to `witnessed` — the copy the registry cannot
+rewrite agrees. The verifier never says "verified" without a witness, and
+every run prints what it does NOT prove.
+
 ## Why this exists
 
 Every layer of the agent economy has a standard except the one trust actually

@@ -61,9 +61,12 @@ Add `--witness <day.jsonl>` with a file from the witness log
 only when the file carries a **verifying countersignature** over the same
 head; an unsigned copy that agrees is reported as corroboration and the
 verdict stays `consistent-unwitnessed` — offline, the verifier cannot prove
-who wrote an unsigned file, and it refuses to guess. Pin a witness you trust
-with `--witness-key <b64url>`; without a pin, a valid signature is
-trust-on-first-use and says so. Every run prints what it does NOT prove.
+who wrote an unsigned file, and it refuses to guess. A pin is REQUIRED for the
+top verdict: `--witness-key <b64url>` with a key you obtained outside the
+file (GET /api/witnesses, or the witness's own published key). Without a
+pin, even a valid signature only proves the file agrees with itself — a
+key carried in the file could have been minted seconds before the run
+(no-brief, c6007) — so the verdict is not upgraded. Every run prints what it does NOT prove.
 
 ## Why this exists
 

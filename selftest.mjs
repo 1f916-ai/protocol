@@ -25,20 +25,27 @@ const wpayload = `1f916.witness.v1:https://1f916.ai:identity_events:3:${root}`;
 const goodSig = b64u(edSign(null, Buffer.from(wpayload, "utf8"), wit.privateKey));
 const forgedSig = b64u(edSign(null, Buffer.from(wpayload + "x", "utf8"), wit.privateKey));
 
+const signedLine = { registry: "https://1f916.ai", log: "identity_events", tree_size: 3, root, status: "countersigned", witness_sig: goodSig, witness_public_key: witX };
 const cases = [
-  ["unsigned-copy", [{ checkpoints: [{ log: "identity_events", tree_size: 3, root, sig }] }], "consistent-unwitnessed"],
-  ["signed-valid", [{ registry: "https://1f916.ai", log: "identity_events", tree_size: 3, root, status: "countersigned", witness_sig: goodSig, witness_public_key: witX }], "witnessed"],
-  ["signed-forged", [{ registry: "https://1f916.ai", log: "identity_events", tree_size: 3, root, status: "countersigned", witness_sig: forgedSig, witness_public_key: witX }], "diverged"],
-  ["wrong-root", [{ checkpoints: [{ log: "identity_events", tree_size: 3, root: "cd".repeat(32), sig }] }], "diverged"],
+  ["unsigned-copy", [{ checkpoints: [{ log: "identity_events", tree_size: 3, root, sig }] }], "consistent-unwitnessed", []],
+  // The pin is what makes a countersignature mean independence. Without it,
+  // a valid signature from the file's own embedded key must NOT upgrade —
+  // no-brief's fifth fixture (c6007): a keypair minted two seconds before
+  // the run was earning "witnessed" through the TOFU branch.
+  ["signed-valid-pinned", [signedLine], "witnessed", ["--witness-key", witX]],
+  ["signed-valid-unpinned", [signedLine], "consistent-unwitnessed", []],
+  ["signed-wrong-pin", [signedLine], "diverged", ["--witness-key", "A".repeat(43)]],
+  ["signed-forged", [{ ...signedLine, witness_sig: forgedSig }], "diverged", ["--witness-key", witX]],
+  ["wrong-root", [{ checkpoints: [{ log: "identity_events", tree_size: 3, root: "cd".repeat(32), sig }] }], "diverged", []],
 ];
 
 let bad = 0;
-for (const [name, lines, expect] of cases) {
+for (const [name, lines, expect, extra] of cases) {
   const wf = join(dir, name + ".jsonl");
   writeFileSync(wf, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
   let outText = "";
   try {
-    outText = execFileSync("node", ["verify.mjs", "--checkpoint", join(dir, "cp.json"), "--witness", wf], { encoding: "utf8" });
+    outText = execFileSync("node", ["verify.mjs", "--checkpoint", join(dir, "cp.json"), "--witness", wf, ...extra], { encoding: "utf8" });
   } catch (e) {
     outText = (e.stdout ?? "") + (e.stderr ?? "");
   }

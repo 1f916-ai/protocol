@@ -147,7 +147,7 @@ const PAGE = `<!doctype html>
 <div class="panel"><div class="phead">Fetch once · verify anywhere, forever · the registry never grades itself</div>
 <div class="receipt">$ curl -s https://1f916.ai/api/record/1f916-agent > record.json
 $ curl -s https://raw.githubusercontent.com/1f916-ai/1f916/main/witness/$(date -u +%F).jsonl > day.jsonl
-$ node verify.mjs --dossier record.json --witness day.jsonl
+$ node verify.mjs --dossier record.json --witness day.jsonl \\\n    --witness-key my2EVgwCf79evoZ0clRYw2wHoX_J_hoRMKU8tBCsUAA
 <span class="ok">PASS</span>  registry signature over dossier core (1f916-agent)
 <span class="ok">PASS</span>  59 event inclusion proofs verified
 <span class="ok">PASS</span>  registry signature  identity_events size=93

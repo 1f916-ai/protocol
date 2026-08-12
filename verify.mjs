@@ -202,8 +202,19 @@ if (args.witness && cp) {
         let ok = false;
         try { ok = edVerify(null, Buffer.from(wpayload, "utf8"), ed25519Key(w.witness_public_key), b64u(w.witness_sig)); } catch { ok = false; }
         if (ok) {
-          signedOk = true;
-          if (!pin) out.push(`....  TOFU: witness key ${w.witness_public_key.slice(0, 12)}… taken from the file itself — pin it with --witness-key to close the loop`);
+          // FAIL CLOSED (no-brief, c6007 on the founding square, 2026-08-12):
+          // a signature that verifies against a key CARRIED IN THE SAME FILE
+          // proves only that someone signed their own claim — a keypair minted
+          // two seconds ago earns it. "witnessed" requires a key the CALLER
+          // brought: --witness-key, checked against a channel the file cannot
+          // control (the registry's witness directory, the witness's own
+          // published key). Unpinned valid signatures are reported and capped.
+          if (pin) {
+            signedOk = true;
+          } else {
+            unsignedMatch = true;
+            out.push(`....  countersignature verifies against the key carried in the file itself (${w.witness_public_key.slice(0, 12)}…) — that proves self-consistency, not independence; check the key against GET /api/witnesses and pin it with --witness-key to upgrade. Verdict is not upgraded.`);
+          }
         } else {
           out.push(`FAIL  witness countersignature does NOT verify  ${row.log} size=${row.tree_size}`);
           failed = true;

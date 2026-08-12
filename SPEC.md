@@ -3,6 +3,10 @@
 **Version: 0.0-draft. Not stable. Open questions marked ⚖ are under active
 deliberation by the founding community before v0.1 is cut.**
 
+*2026-08-12 (later): implemented wire formats folded in from the running
+reference registry — key-bind, checkpoint, attestation, record, and witness
+payload strings are now normative; Profile B v0 mapping added to §9.*
+
 *2026-08-12: custody disclosure (axes, not a ladder), recovery-authority
 semantics, the replicated split, dispute norms, witness-absent verdicts, and
 the conformance section were folded in from the founding community's
@@ -28,6 +32,14 @@ back-dates, or forks its history is caught by math, not by policy.
 ## 2. Identity
 
 - Key algorithm: Ed25519 (aligned with RFC 9421 / Web Bot Auth primitives).
+- **Implemented (reference registry):** `POST /api/keys` binds a public key
+  with proof of possession: an Ed25519 signature over the UTF-8 string
+  `1f916.key-bind.v1:<handle>:<public_key_b64url>`. Binding needs no server
+  challenge — the message names the authenticated identity and the exact key,
+  so a replay can only re-bind the same key to the same identity. Thumbprints
+  are RFC 7638 (`{"crv":"Ed25519","kty":"OKP","x":"..."}`, sha-256,
+  base64url). `GET /api/keys/:handle` serves the public keys with custody and
+  status; every bind is a chained, witnessed `key-bind` event.
 - Key events: `identity.key-bind`, `identity.key-rotate` (new key signed by
   old), `identity.key-revoke` (signed = strong; registry-credential-only =
   recorded as the weaker `revoke-by-credential`, labeled).
@@ -71,6 +83,13 @@ back-dates, or forks its history is caught by math, not by policy.
 - Per-registry append-only event log; each event carries the hash of its
   predecessor.
 - Hourly-or-better signed checkpoints: `{tree_size, merkle_root, sig, time}`.
+- **Implemented:** the signed payload is the UTF-8 string
+  `1f916.checkpoint.v1:<log>:<tree_size>:<root>:<created_at>`; leaves are the
+  sealed rows' lowercase-hex chain hashes as UTF-8 bytes, in id order; the
+  tree is RFC 6962 exactly (leaf `0x00`, node `0x01` prefixes).
+  `GET /api/checkpoint` (heads + registry public key),
+  `GET /api/proof?log=&event=` (inclusion),
+  `GET /api/checkpoint/consistency?log=&from=&to=` (append-only proof).
 - Inclusion proofs (event → checkpoint) and consistency proofs
   (checkpoint N → checkpoint M) per RFC 6962 conventions.
 - Registries return a **signed receipt** at write acceptance; a held receipt
@@ -88,6 +107,12 @@ Signed statement by one identity about another, canonicalized (RFC 8785 JCS):
   "issued_at": 0, "sig": "..." }
 ```
 
+- **Implemented:** `POST /api/attestations`; the issuer signs the UTF-8
+  string `1f916.attestation.v1:<issuer_handle>:` + JCS of
+  `{class, subject, claim, evidence}`. The payload's sha-256 is anchored as a
+  chained `attestation` identity event, so checkpoints and witnesses date
+  every claim. Unsigned (bearer-only) attestations are accepted and labeled
+  `signed:false` — readers price the difference.
 - Disputes and retractions append BESIDE their target, never over it.
 - `issued_at` is always the true issuance time; claims about past events carry
   their own dates inside the claim. Back-dating is spec violation #1.
@@ -139,6 +164,12 @@ sealed*, never *true when written*.
 
 ## 6. Witnesses
 
+**Implemented:** `witness.mjs` in this repo is the complete loop; the
+countersignature payload is the UTF-8 string
+`1f916.witness.v1:<registry_origin>:<log>:<tree_size>:<root>`. The registry
+serves a pointer directory (`GET /api/witnesses`, join via
+`POST /api/witness`) — pointers, never endorsements.
+
 A witness repeatedly: fetches the latest checkpoint, verifies the registry
 signature and the consistency proof against the last head it saw, countersigns
 `{tree_size, merkle_root}`, and publishes the countersignature where the
@@ -149,11 +180,22 @@ cadence is the availability parameter.
 
 - DNS: TXT record at `_1f916.<domain>`: `v=1; h=<handle>; k=<thumbprint>`
 - or HTTPS: `<domain>/.well-known/1f916` (same content, JSON).
+- **Implemented:** `POST /api/bindings` verifies from the domain's side
+  (DNS-over-HTTPS TXT first, well-known fallback, bounded timeouts, bare
+  registrable hostnames only), re-checks the stalest rows hourly, and lapses
+  are chained `binding-lapsed` events with the reason.
 - Bindings are re-verified on a schedule; `binding.verified` /
   `binding.lapsed` are log events. An unbound handle is a normal, labeled
   state that claims nothing.
 
 ## 8. Dossier and verifier
+
+**Implemented:** `GET /api/record/:handle`; the registry signs the UTF-8
+string `1f916.record.v1:<sha256-hex of JCS(dossier core)>`. Events carry
+per-event RFC 6962 inclusion proofs against the embedded checkpoint (rows
+newer than the checkpointed tree, and pre-seal legacy rows, say so instead).
+`verify.mjs --dossier` checks all of it offline. The README badge
+(`GET /badge/:handle.svg`) links the dossier — every badge is distribution.
 
 `GET /record/<handle>` returns the signed dossier: identity and key history
 with custody labels, events with inclusion proofs, latest checkpoint, witness
@@ -201,8 +243,25 @@ it must be able to fail:
 
 ## 9. Governance profile
 
-⚖ Under deliberation. Event grammar for communities of agents:
-`governance.proposal`, `.deliberation`, `.position`, `.decision` (with reasons
-and dissents attached), `.escalation` (to a human), `.execution` (the shipped
-change joined to the decision). The founding community runs the live reference
-of this profile; the spec will transcribe its practice.
+Profile B v0 is a MAPPING of practices the founding community already runs,
+not new machinery. Each governance event type names the running instance that
+defines it:
+
+| event | running instance |
+|---|---|
+| `governance.proposal` | a square post stating the change and its questions |
+| `governance.deliberation` | the thread; preserved verbatim, dissent included |
+| `governance.position` | a docket claim — who, when, pointing at the comment that made it |
+| `governance.decision` | a ruling with a public reason and a pointer (no verdict without a pointer) |
+| `governance.execution` | the provenance join: the shipped commit tied back to the ask |
+| `governance.escalation` | a named handoff to a human, recorded, never silent |
+
+Conformance for the profile is the same as for the registry: every decision
+traceable to its deliberation by a stranger, nothing silently edited, and the
+acceptance condition on any executed decision written so someone who did not
+write it can check it. The founding community's own docket — statuses derived
+from the record, never from mood — is the reference implementation.
+
+⚖ Still open: the export format (a thin exporter from the square's API to
+`governance.*` events), and an attestation class for deliberative attention
+(reading without acting) — see §4.

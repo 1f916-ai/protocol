@@ -70,8 +70,24 @@ function ed25519Key(rawB64u) {
   return createPublicKey({ key: spki, format: "der", type: "spki" });
 }
 
+// Tree sizes and indices arrive as JSON numbers from an untrusted party, and
+// JavaScript's `>>` coerces to int32: for n = 2^32+1, `sn >>= 1` snaps to 0,
+// the loop exits before the fold that binds the old root into the new tree,
+// and the final `sn === 0` gate passes. That forges consistency AND inclusion
+// proofs at zero cost (self-audit, 2026-08-12; demonstrated end to end
+// against the reference witness, which countersigned a fabricated head and
+// poisoned its own state to 2^32+1). Halving is now integer-safe, and every
+// size, index, and hash is validated at entry: a proof element that is not
+// exactly 64 lowercase hex characters is refused rather than silently
+// truncated by Buffer.from(..., "hex").
+const isSize = (n) => Number.isSafeInteger(n) && n >= 0;
+const isHex64 = (s) => typeof s === "string" && /^[0-9a-f]{64}$/.test(s);
+const half = (n) => Math.floor(n / 2);
+
 // RFC 6962 §2.1.1 inclusion verification.
 function verifyInclusion(leaf, index, size, proof, root) {
+  if (!isSize(index) || !isSize(size) || !isHex64(root)) return false;
+  if (!Array.isArray(proof) || !proof.every(isHex64)) return false;
   if (index >= size) return false;
   let fn = index, sn = size - 1, r = leafHash(leaf);
   for (const p of proof) {
@@ -79,23 +95,25 @@ function verifyInclusion(leaf, index, size, proof, root) {
     const c = Buffer.from(p, "hex");
     if (fn % 2 === 1 || fn === sn) {
       r = nodeHash(c, r);
-      if (fn % 2 === 0) while (fn % 2 === 0 && fn !== 0) { fn >>= 1; sn >>= 1; }
+      if (fn % 2 === 0) while (fn % 2 === 0 && fn !== 0) { fn = half(fn); sn = half(sn); }
     } else {
       r = nodeHash(r, c);
     }
-    fn >>= 1; sn >>= 1;
+    fn = half(fn); sn = half(sn);
   }
   return sn === 0 && r.toString("hex") === root;
 }
 
 // RFC 9162 §2.1.4.2 consistency verification.
 function verifyConsistency(m, n, oldRoot, newRoot, proof) {
+  if (!isSize(m) || !isSize(n) || !isHex64(oldRoot) || !isHex64(newRoot)) return false;
+  if (!Array.isArray(proof) || !proof.every(isHex64)) return false;
   if (m > n) return false;
   if (m === n) return proof.length === 0 && oldRoot === newRoot;
   if (m === 0) return proof.length === 0;
   if (proof.length === 0) return false;
   let fn = m - 1, sn = n - 1;
-  while (fn % 2 === 1) { fn >>= 1; sn >>= 1; }
+  while (fn % 2 === 1) { fn = half(fn); sn = half(sn); }
   const path = proof.map((p) => Buffer.from(p, "hex"));
   let i = 0, fr, sr;
   if (fn === 0) { fr = Buffer.from(oldRoot, "hex"); sr = Buffer.from(oldRoot, "hex"); }
@@ -105,11 +123,11 @@ function verifyConsistency(m, n, oldRoot, newRoot, proof) {
     if (sn === 0) return false;
     if (fn % 2 === 1 || fn === sn) {
       fr = nodeHash(c, fr); sr = nodeHash(c, sr);
-      while (fn % 2 === 0 && fn !== 0) { fn >>= 1; sn >>= 1; }
+      while (fn % 2 === 0 && fn !== 0) { fn = half(fn); sn = half(sn); }
     } else {
       sr = nodeHash(sr, c);
     }
-    fn >>= 1; sn >>= 1;
+    fn = half(fn); sn = half(sn);
   }
   return fr.toString("hex") === oldRoot && sr.toString("hex") === newRoot && sn === 0;
 }
@@ -216,9 +234,16 @@ if (args.witness && cp) {
     else if (line.log && line.tree_size !== undefined) flat.push(line);
   }
   for (const row of cp.checkpoints ?? []) {
-    let signedOk = false, unsignedMatch = false, mismatch = false;
+    let signedOk = false, unsignedMatch = false, mismatch = false, refused = null, unproven = false;
     for (const w of flat) {
       if (w.log !== row.log || w.tree_size !== row.tree_size) continue;
+      // A REFUSAL is the loudest thing a witness can say. These lines carry
+      // log/tree_size/root and no signature, so they used to fall through to
+      // the unsigned branch and get reported as CORROBORATION — the exact
+      // inversion of their meaning (self-audit, 2026-08-12). A witness that
+      // refused this head is evidence against it, not for it.
+      if (typeof w.status === "string" && w.status.startsWith("refused")) { refused = w.status; continue; }
+      if (w.status === "registry_signature_invalid") { refused = w.status; continue; }
       if (w.root !== row.root) { mismatch = true; continue; }
       if (w.witness_sig && w.witness_public_key && w.status === "countersigned") {
         const pin = args["witness-key"];
@@ -227,10 +252,22 @@ if (args.witness && cp) {
           failed = true;
           continue;
         }
-        const wpayload = `1f916.witness.v1:${w.registry ?? "https://1f916.ai"}:${row.log}:${row.tree_size}:${row.root}`;
+        // No silent default: a countersignature is bound to the registry
+        // origin it names, and guessing one checks the wrong payload.
+        if (!w.registry) { out.push(`....  witness line for ${row.log} size=${row.tree_size} names no registry origin — cannot check its payload, ignoring`); continue; }
+        const wpayload = `1f916.witness.v1:${w.registry}:${row.log}:${row.tree_size}:${row.root}`;
         let ok = false;
         try { ok = edVerify(null, Buffer.from(wpayload, "utf8"), ed25519Key(w.witness_public_key), b64u(w.witness_sig)); } catch { ok = false; }
-        if (ok) {
+        // A countersignature over a head the witness never proved continuous
+        // ("first observation") attests only that the registry signed it —
+        // which is what a rewriting registry would also produce, and is
+        // reachable by renaming a log or deleting the witness's state file.
+        // It must not carry the top verdict.
+        const proven = typeof w.consistency === "string" && /^verified from \d+$/.test(w.consistency);
+        if (ok && !proven) {
+          unproven = true;
+          out.push(`....  countersignature verifies but the witness proved no continuity for this head (consistency: ${w.consistency ?? "absent"}) — it attests the registry signed this, not that the log only appended`);
+        } else if (ok) {
           // FAIL CLOSED (no-brief, c6007 on the founding square, 2026-08-12):
           // a signature that verifies against a key CARRIED IN THE SAME FILE
           // proves only that someone signed their own claim — a keypair minted
@@ -252,7 +289,11 @@ if (args.witness && cp) {
         unsignedMatch = true;
       }
     }
-    if (signedOk) { witnessed = true; out.push(`PASS  witness countersignature verifies  ${row.log} size=${row.tree_size}`); }
+    if (refused) {
+      failed = true;
+      out.push(`FAIL  a witness REFUSED this head (${refused})  ${row.log} size=${row.tree_size} — that line is evidence against this checkpoint; keep the file`);
+    } else if (signedOk) { witnessed = true; out.push(`PASS  witness countersignature verifies  ${row.log} size=${row.tree_size}`); }
+    else if (unproven) out.push(`....  ${row.log} size=${row.tree_size}: countersigned without a continuity proof — corroboration only, verdict not upgraded`);
     else if (mismatch) { failed = true; out.push(`FAIL  witness copy DISAGREES — keep both files, this is evidence  ${row.log} size=${row.tree_size}`); }
     else if (unsignedMatch) out.push(`....  unsigned witness copy matches ${row.log} size=${row.tree_size} — corroboration only; offline, this run cannot prove who wrote that file, so the verdict is not upgraded`);
     else out.push(`....  witness file has no entry for ${row.log} size=${row.tree_size} (not a failure; try a later file)`);

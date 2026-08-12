@@ -33,7 +33,13 @@ const wpayload = `1f916.witness.v1:https://1f916.ai:identity_events:3:${root}`;
 const goodSig = b64u(edSign(null, Buffer.from(wpayload, "utf8"), wit.privateKey));
 const forgedSig = b64u(edSign(null, Buffer.from(wpayload + "x", "utf8"), wit.privateKey));
 
-const signedLine = { registry: "https://1f916.ai", log: "identity_events", tree_size: 3, root, status: "countersigned", witness_sig: goodSig, witness_public_key: witX };
+// A countersignature that proves continuity from a previous head — the only
+// shape that earns the top verdict.
+const signedLine = { registry: "https://1f916.ai", log: "identity_events", tree_size: 3, root, status: "countersigned", consistency: "verified from 2", witness_sig: goodSig, witness_public_key: witX };
+// Same signature, but the witness had no previous head to compare against.
+const firstObsLine = { ...signedLine, consistency: "first observation" };
+// A witness that REFUSED this head. Its meaning is the opposite of support.
+const refusalLine = { registry: "https://1f916.ai", log: "identity_events", tree_size: 3, root, status: "refused-consistency-failure", consistency: "FAILED — possible rewrite, evidence, keep this line" };
 
 // --- the anchor axis: a dossier is only as good as the key that checked it
 function jcs(v) {
@@ -74,6 +80,14 @@ const cases = [
   // the run was earning "witnessed" through the TOFU branch.
   // A pinned witness anchors the run by itself: it verified the registry.
   ["signed-valid-pinned", [signedLine], "witnessed", ["--witness-key", witX]],
+  // "first observation" attests that the registry signed a head, which is
+  // also what a rewriting registry produces. It must not reach witnessed.
+  ["first-observation-pinned", [firstObsLine], "consistent-unwitnessed", ["--witness-key", witX, "--registry-key", regX]],
+  // A refusal line used to be read as corroboration — the inversion.
+  ["witness-refusal", [refusalLine], "diverged", ["--registry-key", regX]],
+  // A refusal alongside a good countersignature still fails: the loudest
+  // statement wins, and it must not be silently outvoted.
+  ["refusal-beside-countersignature", [signedLine, refusalLine], "diverged", ["--witness-key", witX, "--registry-key", regX]],
   ["signed-valid-unpinned", [signedLine], "unanchored", []],
   ["signed-wrong-pin", [signedLine], "diverged", ["--witness-key", "A".repeat(43)]],
   ["signed-forged", [{ ...signedLine, witness_sig: forgedSig }], "diverged", ["--witness-key", witX]],

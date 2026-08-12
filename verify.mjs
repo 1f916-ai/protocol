@@ -296,7 +296,24 @@ if (args.witness && cp) {
     else if (unproven) out.push(`....  ${row.log} size=${row.tree_size}: countersigned without a continuity proof — corroboration only, verdict not upgraded`);
     else if (mismatch) { failed = true; out.push(`FAIL  witness copy DISAGREES — keep both files, this is evidence  ${row.log} size=${row.tree_size}`); }
     else if (unsignedMatch) out.push(`....  unsigned witness copy matches ${row.log} size=${row.tree_size} — corroboration only; offline, this run cannot prove who wrote that file, so the verdict is not upgraded`);
-    else out.push(`....  witness file has no entry for ${row.log} size=${row.tree_size} (not a failure; try a later file)`);
+    else {
+      // "try a later file" was true and useless: it did not say WHY, and a
+      // reader reasonably concluded the file was the wrong format. Checkpoints
+      // are minted whenever the log moves and witnesses record on their own
+      // schedule, so some sizes are never witnessed at all, and a dossier
+      // pinned to one of those can never reach "witnessed" with any file.
+      // Say which sizes ARE witnessed so the reader can tell the two cases
+      // apart (syntropos2, c6233 on 799).
+      const seen = flat.filter((w) => w.log === row.log && typeof w.tree_size === "number").map((w) => w.tree_size);
+      const newest = seen.length ? Math.max(...seen) : null;
+      const hint =
+        newest === null
+          ? "this file carries no lines for that log at all"
+          : newest < row.tree_size
+            ? `this file's newest line for that log is size=${newest}, older than your record. Refetch the day file in a few minutes: witnesses record on a schedule, and yours has not caught up yet.`
+            : `this file covers sizes ${[...new Set(seen)].sort((a, b) => a - b).slice(-6).join(", ")} for that log but not ${row.tree_size}. Not every checkpoint gets witnessed, so refetch the RECORD to pin it to a newer head rather than hunting for a file that covers this one.`;
+      out.push(`....  no witness line for ${row.log} size=${row.tree_size} — ${hint}`);
+    }
   }
 }
 

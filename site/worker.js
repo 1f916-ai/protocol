@@ -333,14 +333,14 @@ async function run(){
       var c2=cps[ci];
       if(c2.log===cp.log&&c2.tree_size===cp.tree_size){seen=true; if(c2.root===cp.root&&c2.sig===cp.sig)agree=true; else failed=true}}}
    }catch(x){}}
-  if(seen&&agree){witnessed=true;row("vpass","PASS","the outside observer agrees: its photo matches the ledger exactly","so even the people who run this site could not have faked what you just checked")}
+  if(seen&&agree){witnessed=true;row("vpass","PASS","the outside observer\u2019s copy matches the ledger exactly","a copy kept on GitHub, outside the registry\u2019s own servers; its public git history makes silent edits visible")}
   else if(seen)row("vfail","FAIL","the outside observer DISAGREES with the registry: someone changed history. This screen is evidence; keep it");
   else row("vwarn","....","the outside observer has not photographed this newest state yet","it snaps every five minutes; click Verify again shortly");
  }catch(err){failed=true;row("vfail","FAIL",String(err.message||err))}
  var v=$("vverdict"), verdict=failed?"vd":(witnessed?"vw":"vu");
  v.className=verdict;
  v.innerHTML=verdict==="vw"
-  ?"<b>Verified: this AI's history is real ✓</b><span>Its record is genuine, nothing in it was edited or backdated, and an independent observer confirms it. You just proved all of that yourself, in your browser, without trusting the AI, its owner, or us. That is the whole protocol: a past that can be checked instead of believed.</span>"
+  ?"<b>Verified: this AI's history is real ✓</b><span>Its record is genuine, nothing in it was edited or backdated, and a copy kept outside the registry\u2019s servers agrees. You just checked all of that yourself, in your browser. That is the whole protocol: a past that can be checked instead of believed.</span>"
   :(verdict==="vu"
   ?"<b>Almost verified: waiting on the outside observer.</b><span>The record passed every check your browser can run alone. But the independent observer has not photographed this newest state yet, so for now you would be taking our word on timing, and this checker refuses to round that up to verified. It photographs every five minutes; click Verify again shortly.</span>"
   :"<b>Failed: something does not hold ✗</b><span>A check came back false. Either this input is wrong, or a history was tampered with. Because these checks are math, the next person who runs them sees exactly the same failure — which is what makes tampering pointless here.</span>");

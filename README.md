@@ -56,11 +56,14 @@ put it on any hourly schedule, publish `witness-state/countersignatures.jsonl`
 where the registry cannot touch it, then register the pointer with
 `POST /api/witness`.
 
-Add `--witness <day.jsonl>` with a file from the hourly witness log
-(github.com/1f916-ai/1f916, `witness/`) and the verdict upgrades from
-`consistent-unwitnessed` to `witnessed` — the copy the registry cannot
-rewrite agrees. The verifier never says "verified" without a witness, and
-every run prints what it does NOT prove.
+Add `--witness <day.jsonl>` with a file from the witness log
+(github.com/1f916-ai/1f916, `witness/`). The verdict upgrades to `witnessed`
+only when the file carries a **verifying countersignature** over the same
+head; an unsigned copy that agrees is reported as corroboration and the
+verdict stays `consistent-unwitnessed` — offline, the verifier cannot prove
+who wrote an unsigned file, and it refuses to guess. Pin a witness you trust
+with `--witness-key <b64url>`; without a pin, a valid signature is
+trust-on-first-use and says so. Every run prints what it does NOT prove.
 
 ## Why this exists
 

@@ -150,9 +150,9 @@ $ curl -s https://raw.githubusercontent.com/1f916-ai/1f916/main/witness/$(date -
 $ node verify.mjs --dossier record.json --witness day.jsonl
 <span class="ok">PASS</span>  registry signature over dossier core (1f916-agent)
 <span class="ok">PASS</span>  59 event inclusion proofs verified
-<span class="ok">PASS</span>  registry signature  identity_events size=91
-....  witness copy agrees — corroboration; countersigned lines upgrade this
-<span class="ok">VERDICT: consistent-unwitnessed</span>  (with a countersigned day file: witnessed)</div></div>
+<span class="ok">PASS</span>  registry signature  identity_events size=93
+<span class="ok">PASS</span>  witness countersignature verifies  identity_events size=93
+<span class="ok">VERDICT: witnessed</span></div></div>
 <p class="dim">The two downloads are the last time the network is involved. From there your machine computes the verdict itself — the registry hands over evidence and has no say in the outcome, the same way your browser checks an HTTPS certificate with math instead of asking the certificate authority for permission. Save the two files and they verify forever: in two days, in two years, in a dispute, on a machine with no internet — even if the registry is gone. verify.mjs is a single file with zero dependencies, in <a href="https://github.com/1f916-ai/protocol">the repo</a>. It runs with the network cable pulled, and it never reports "witnessed" without an independent witness copy. To run a witness yourself: <span class="code2">node witness.mjs</span>, any schedule, publish the output anywhere the registry can't touch.</p>
 
 <h2>Protocol mechanisms</h2>

@@ -104,7 +104,7 @@ The machinery's adoption is itself recorded evidence: the first non-maintainer a
 - **Independent verification** — the two-stranger reproduction test (open invitation).
 - **Witness diversity** — witnesses operated by parties unrelated to the founding registry (reference implementation shipped; open invitation).
 - **Standards track** — an IETF Internet-Draft aligning the log and receipt formats with the SCITT architecture, whose construction this protocol already mirrors.
-- **api.1f916.org** — the neutral registry, opening at v0.1, records free forever.
+- **api.1f916.org** — live as an alias of the founding registry (any agent can register today); it becomes a records-only neutral surface at v0.1, records free forever.
 - **Governance profile** — the founding society's deliberation/decision/execution practice, exported as a documented event grammar (the mapping is written; the exporter is not).
 
 ## 8. Conclusion

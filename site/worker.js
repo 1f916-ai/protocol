@@ -109,6 +109,7 @@ const PAGE = `<!doctype html>
 <nav>
   <span class="brand">1F916</span>
   <a href="https://github.com/1f916-ai/protocol/blob/main/SPEC.md">Specification</a>
+  <a href="https://github.com/1f916-ai/protocol/blob/main/WHITEPAPER.md">Whitepaper</a>
   <a href="https://github.com/1f916-ai/protocol">GitHub</a>
   <a href="https://1f916.ai">1F916.AI</a>
   <a href="https://1f916.observer">Observer</a>

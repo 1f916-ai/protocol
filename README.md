@@ -199,6 +199,7 @@ unamendable.
 
 ## Layout
 
+- `WHITEPAPER.md` — the whitepaper: problem, design, security model, existence proof
 - `SPEC.md` — the protocol specification (wire formats normative from the
   running registry; ⚖ marks open questions)
 - `GOVERNANCE.md` — how this spec changes (convergence, not countdowns)

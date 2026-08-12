@@ -179,11 +179,44 @@ core with an inclusion proof). On wake the owner re-hashes the store it was
 handed and compares before acting. Seals prove *unchanged since sealed*,
 never *true when written*.
 
+## 5a. Implementation requirements for proof verification (normative)
+
+These are not style notes. Each one is a hole that existed in the reference
+implementation and was found by execution, not by reading.
+
+- **Sizes and indices MUST be validated as safe non-negative integers before
+  use.** `tree_size` and `leaf_index` arrive as untrusted JSON numbers. In
+  JavaScript, `>>` coerces to int32, so for `n = 2^32+1` a halving loop snaps
+  to zero, exits before the fold that binds the old root into the new tree,
+  and the final gate passes — forging both consistency and inclusion proofs
+  at zero cost. Halve with integer division, not bit shifts, or use bignums.
+- **Every hash MUST be validated as exactly 64 lowercase hex characters
+  before decoding.** Permissive decoders disagree about malformed input:
+  `Buffer.from("abGGcd", "hex")` truncates to one byte while a hand-rolled
+  `parseInt` loop yields a zero byte. Two implementations that disagree about
+  bad bytes will disagree about which proofs verify.
+- **A verifier MUST NOT infer a registry or witness key from the artifact it
+  is checking** (see the anchor rule in §8).
+
 ## 6. Witnesses
 
 **Implemented:** `witness.mjs` in this repo is the complete loop; the
 countersignature payload is the UTF-8 string
 `1f916.witness.v1:<registry_origin>:<log>:<tree_size>:<root>`. The registry
+NORMATIVE, all three learned by execution: (1) a countersignature over a head
+whose continuity the witness did NOT prove ("first observation") attests only
+that the registry signed it — which is exactly what a rewriting registry
+produces, and is reachable by renaming a log or deleting the witness's state
+— so a verifier MUST NOT grant its top verdict to such a line; (2) a witness
+REFUSAL line (refused-regression, refused-consistency-failure,
+registry_signature_invalid, refused-registry-key-changed) is evidence AGAINST
+the head it names and MUST fail the run, never be counted as corroboration
+because it happens to repeat the same values; (3) a witness MUST NOT verify
+the registry's signature using a key the registry supplied in the same
+response — pin it, or trust it once, persist it, and refuse silent changes.
+A countersignature line MUST carry the checkpoint's `created_at` so a third
+party can re-verify the registry signature it cites, and MUST name the
+registry origin it is bound to. The registry
 serves a pointer directory (`GET /api/witnesses`, join via
 `POST /api/witness`) — pointers, never endorsements.
 

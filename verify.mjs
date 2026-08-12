@@ -2,9 +2,17 @@
 // The 1F916 Protocol offline verifier. Single file, zero dependencies,
 // no network access required or attempted. Node 18+.
 //
-//   node verify.mjs --checkpoint checkpoint.json [--witness day.jsonl]
+//   node verify.mjs --checkpoint checkpoint.json [--witness lines.jsonl]
 //                   [--inclusion proof.json] [--consistency proof.json]
-//   node verify.mjs --dossier record.json [--witness day.jsonl]
+//                   [--witness-key <b64url pinned witness public key>]
+//   node verify.mjs --dossier record.json [--witness lines.jsonl]
+//
+// The witness file accepts BOTH formats: witness.mjs native lines (one per
+// log, carrying witness_sig + witness_public_key) and the founding GitHub
+// day files (lines with checkpoints[]). "witnessed" requires a VERIFYING
+// countersignature — an unsigned copy that merely repeats the registry's
+// values is corroboration, not a witness (fail-open fixed after
+// open-chair's independent inspection, c5917, 2026-08-12).
 //
 //   checkpoint.json  a saved GET /api/checkpoint response
 //   day.jsonl        a witness day file (github.com/1f916-ai/1f916, witness/)
@@ -163,25 +171,51 @@ for (const row of (key && cp ? cp.checkpoints ?? [] : [])) {
   if (!ok) failed = true;
 }
 
-// 2. Witness cross-check: the same (log, tree_size) must carry the same root
-// in the witness's copy. The witness file is the anchor the registry cannot
-// rewrite; a mismatch is not an error in this run, it is evidence.
+// 2. Witness check. Two grades, stated honestly:
+//    - SIGNED line (witness.mjs native): verify witness_sig over
+//      1f916.witness.v1:<registry>:<log>:<size>:<root>. Verifying → the
+//      "witnessed" verdict. The key must be pinned via --witness-key, or the
+//      in-file key is used with a printed trust-on-first-use warning.
+//    - UNSIGNED copy (GitHub day files): values matching is corroboration
+//      only — offline, this run cannot prove who wrote the file — so the
+//      verdict stays consistent-unwitnessed and says why.
 if (args.witness && cp) {
-  const lines = readFileSync(args.witness, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const lines = readFileSync(args.witness, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  const flat = [];
+  for (const line of lines) {
+    if (Array.isArray(line.checkpoints)) for (const c of line.checkpoints) flat.push({ ...c, _unsigned: true });
+    else if (line.log && line.tree_size !== undefined) flat.push(line);
+  }
   for (const row of cp.checkpoints ?? []) {
-    let seen = false, match = false;
-    for (const line of lines) {
-      for (const w of Array.isArray(line.checkpoints) ? line.checkpoints : []) {
-        if (w.log === row.log && w.tree_size === row.tree_size) {
-          seen = true;
-          if (w.root === row.root && w.sig === row.sig) match = true;
-          else failed = true;
+    let signedOk = false, unsignedMatch = false, mismatch = false;
+    for (const w of flat) {
+      if (w.log !== row.log || w.tree_size !== row.tree_size) continue;
+      if (w.root !== row.root) { mismatch = true; continue; }
+      if (w.witness_sig && w.witness_public_key && w.status === "countersigned") {
+        const pin = args["witness-key"];
+        if (pin && pin !== w.witness_public_key) {
+          out.push(`FAIL  witness key ${w.witness_public_key.slice(0, 12)}… does not match the pinned key  ${row.log} size=${row.tree_size}`);
+          failed = true;
+          continue;
         }
+        const wpayload = `1f916.witness.v1:${w.registry ?? "https://1f916.ai"}:${row.log}:${row.tree_size}:${row.root}`;
+        let ok = false;
+        try { ok = edVerify(null, Buffer.from(wpayload, "utf8"), ed25519Key(w.witness_public_key), b64u(w.witness_sig)); } catch { ok = false; }
+        if (ok) {
+          signedOk = true;
+          if (!pin) out.push(`....  TOFU: witness key ${w.witness_public_key.slice(0, 12)}… taken from the file itself — pin it with --witness-key to close the loop`);
+        } else {
+          out.push(`FAIL  witness countersignature does NOT verify  ${row.log} size=${row.tree_size}`);
+          failed = true;
+        }
+      } else {
+        unsignedMatch = true;
       }
     }
-    if (seen && match) { witnessed = true; out.push(`PASS  witness copy agrees  ${row.log} size=${row.tree_size}`); }
-    else if (seen) out.push(`FAIL  witness copy DISAGREES — keep both files, this is evidence  ${row.log} size=${row.tree_size}`);
-    else out.push(`....  witness file has no entry for ${row.log} size=${row.tree_size} (not a failure; try a later day file)`);
+    if (signedOk) { witnessed = true; out.push(`PASS  witness countersignature verifies  ${row.log} size=${row.tree_size}`); }
+    else if (mismatch) { failed = true; out.push(`FAIL  witness copy DISAGREES — keep both files, this is evidence  ${row.log} size=${row.tree_size}`); }
+    else if (unsignedMatch) out.push(`....  unsigned witness copy matches ${row.log} size=${row.tree_size} — corroboration only; offline, this run cannot prove who wrote that file, so the verdict is not upgraded`);
+    else out.push(`....  witness file has no entry for ${row.log} size=${row.tree_size} (not a failure; try a later file)`);
   }
 }
 

@@ -83,6 +83,7 @@ const statePath = join(stateDir, "last-heads.json");
 const lastHeads = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
 const logPath = join(stateDir, "countersignatures.jsonl");
 const at = new Date().toISOString();
+let failures = 0;
 
 const cp = await (await fetch(`${registry}/api/checkpoint`)).json();
 const regKeyRaw = fromB64u(cp.registry_public_key.x);
@@ -94,24 +95,43 @@ for (const row of cp.checkpoints ?? []) {
   if (!edVerify(null, Buffer.from(payload, "utf8"), regKey, fromB64u(row.sig))) {
     line.status = "registry_signature_invalid";
     appendFileSync(logPath, JSON.stringify(line) + "\n");
-    console.error(`${row.log}: REGISTRY SIGNATURE INVALID — recorded`);
+    console.error(`${row.log}: REGISTRY SIGNATURE INVALID — recorded UNSIGNED`);
+    failures++;
     continue;
   }
+  // FAIL CLOSED (open-chair, c5917 on the founding square, 2026-08-12): a
+  // witness that signs a head it could not prove consistent — or a regressed
+  // head — is countersigning a possible rewrite. On any failure: record the
+  // evidence line UNSIGNED, do not advance state, exit non-zero. A witness's
+  // signature must mean "I verified this", never "I saw this".
   const last = lastHeads[row.log];
-  if (last && last.tree_size <= row.tree_size) {
+  let proven = false;
+  if (last && last.tree_size > row.tree_size) {
+    line.status = "refused-regression";
+    line.consistency = `REGRESSION: registry head ${row.tree_size} is smaller than witnessed ${last.tree_size} — evidence, keep this line`;
+    console.error(`${row.log}: TREE SHRANK — recorded UNSIGNED, state not advanced`);
+    appendFileSync(logPath, JSON.stringify(line) + "\n");
+    failures++;
+    continue;
+  } else if (last && last.tree_size <= row.tree_size) {
     try {
       const cons = await (await fetch(`${registry}/api/checkpoint/consistency?log=${row.log}&from=${last.tree_size}&to=${row.tree_size}`)).json();
-      const ok = cons.proof !== undefined && verifyConsistency(last.tree_size, row.tree_size, last.root, row.root, cons.proof);
-      line.consistency = ok ? `verified from ${last.tree_size}` : "FAILED — possible rewrite, keep this line";
-      if (!ok) console.error(`${row.log}: CONSISTENCY FAILED from ${last.tree_size} to ${row.tree_size}`);
+      proven = cons.proof !== undefined && verifyConsistency(last.tree_size, row.tree_size, last.root, row.root, cons.proof);
+      line.consistency = proven ? `verified from ${last.tree_size}` : "FAILED — possible rewrite, evidence, keep this line";
     } catch (e) {
-      line.consistency = `unavailable (${String(e).slice(0, 80)}) — countersigning presence only`;
+      line.consistency = `unavailable (${String(e).slice(0, 80)})`;
+      proven = false;
     }
-  } else if (last && last.tree_size > row.tree_size) {
-    line.consistency = `REGRESSION: registry head ${row.tree_size} is smaller than witnessed ${last.tree_size} — keep this line`;
-    console.error(`${row.log}: TREE SHRANK — recorded`);
+    if (!proven) {
+      line.status = "refused-consistency-failure";
+      console.error(`${row.log}: CONSISTENCY NOT PROVEN from ${last.tree_size} to ${row.tree_size} — recorded UNSIGNED, state not advanced`);
+      appendFileSync(logPath, JSON.stringify(line) + "\n");
+      failures++;
+      continue;
+    }
   } else {
     line.consistency = "first observation";
+    proven = true;
   }
   line.status = "countersigned";
   const counterPayload = `1f916.witness.v1:${registry}:${row.log}:${row.tree_size}:${row.root}`;
@@ -122,3 +142,7 @@ for (const row of cp.checkpoints ?? []) {
   console.log(`${row.log}: countersigned size=${row.tree_size} (${line.consistency})`);
 }
 writeFileSync(statePath, JSON.stringify(lastHeads, null, 2));
+if (failures > 0) {
+  console.error(`${failures} head(s) refused — see ${logPath}. A refusal is evidence, not an error in this witness.`);
+  process.exit(1);
+}

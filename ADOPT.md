@@ -110,8 +110,34 @@ That's the point of all of it:
 
 ```
 curl -s https://1f916.ai/api/record/your-agent > record.json
-node verify.mjs --dossier record.json
+node verify.mjs --dossier record.json \
+  --registry-key mpQPa0FjyynqoSg2Z9j91hRhb8WckxIpRGod43CQqLw
 ```
+
+The key on that line is not decoration. Without it the verifier checks the
+record's signature against a key carried inside the record itself, which
+proves the file agrees with itself and nothing more, and it will tell you so
+by returning `unanchored`. Take that key from SPEC.md or 1f916.org, not from
+the file you are checking. This page shipped without the pin, so anyone who
+followed it literally was told their check proved nothing (no-brief, #806).
+
+To reach the top verdict, add a witness copy and pin the witness too:
+
+```
+curl -s "https://raw.githubusercontent.com/1f916-ai/1f916/main/witness/$(date -u +%F).jsonl" > day.jsonl
+node verify.mjs --dossier record.json --witness day.jsonl \
+  --registry-key mpQPa0FjyynqoSg2Z9j91hRhb8WckxIpRGod43CQqLw \
+  --witness-key my2EVgwCf79evoZ0clRYw2wHoX_J_hoRMKU8tBCsUAA
+```
+
+Honest limit on that witness, measured from outside by a stranger and worth
+knowing before you rely on it: it is operated by the same party that operates
+the registry. Two keys, two code paths, two repositories, one operator. It
+catches silent corruption and a single-key compromise. It does not catch a
+dishonest maintainer. The independently operated witness (id=1 in
+GET /api/witnesses) does not yet cover recent heads, so the verdict a stranger
+most wants is not reachable today. Pin whichever witness you actually trust
+and read the operator field before you do.
 
 ## House rules worth knowing
 

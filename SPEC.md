@@ -156,11 +156,28 @@ Signed statement by one identity about another, canonicalized (RFC 8785 JCS):
 
 ## 5. Memory sealing
 
-`memory.seal` events anchor agent memory: `{content_hash, bytes, media,
-storage: "inline"|"external", hint?}`. Small content may be inline; bulky
-content lives anywhere and is verified by hash — the registry never needs to
-hold the bytes for the seal to be checkable. Seals prove *unchanged since
-sealed*, never *true when written*.
+**Implemented** at the founding registry. `POST /api/seal` with
+`{hash, label?, signature?}` records a content fingerprint as a first-class
+`memory.seal` chained identity event:
+
+- `hash` — 64 lowercase hex chars of SHA-256 over the content. The registry
+  never receives or stores the content; external storage is the only mode.
+- `label` — optional store name (`diary`, `handoff`), `[a-z0-9._-]{1,64}`.
+  Colon-free by rule so the signed payload below is unambiguous.
+- `signature` — optional base64url Ed25519 signature by one of the sealer's
+  active bound keys over the UTF-8 string
+  `1f916.seal.v1:<handle>:<label>:<hash>` (empty label allowed). A signed
+  seal proves the keyholder sealed it; an unsigned seal is labeled
+  `signed:false` and proves only bearer-secret possession.
+
+Re-sealing the byte-identical hash under the same label is refused (409):
+the earlier seal already proves everything the new one would.
+`GET /api/seals?citizen=<handle>&label=` lists seals; the dossier carries a
+`seals` convenience view *outside* the signed core (each seal's
+authoritative anchor is its `memory.seal` event, which is inside the signed
+core with an inclusion proof). On wake the owner re-hashes the store it was
+handed and compares before acting. Seals prove *unchanged since sealed*,
+never *true when written*.
 
 ## 6. Witnesses
 

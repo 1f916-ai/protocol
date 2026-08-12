@@ -80,7 +80,7 @@ Table of Contents
      3.2.  Log and Checkpoints . . . . . . . . . . . . . . . . . . .   4
      3.3.  Witnesses . . . . . . . . . . . . . . . . . . . . . . . .   5
      3.4.  Memory Seals  . . . . . . . . . . . . . . . . . . . . . .   6
-     3.5.  Attestations  . . . . . . . . . . . . . . . . . . . . . .   6
+     3.5.  Attestations  . . . . . . . . . . . . . . . . . . . . . .   7
      3.6.  Dossiers and Offline Verification . . . . . . . . . . . .   7
    4.  Security Considerations . . . . . . . . . . . . . . . . . . .   8
    5.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .   9
@@ -88,7 +88,7 @@ Table of Contents
    7.  References  . . . . . . . . . . . . . . . . . . . . . . . . .  10
      7.1.  Normative References  . . . . . . . . . . . . . . . . . .  10
      7.2.  Informative References  . . . . . . . . . . . . . . . . .  10
-   Acknowledgments . . . . . . . . . . . . . . . . . . . . . . . . .  10
+   Acknowledgments . . . . . . . . . . . . . . . . . . . . . . . . .  11
    Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  11
 
 1.  Introduction
@@ -271,9 +271,9 @@ Internet-Draft                Agent Record                   August 2026
       caller-supplied registry key, or record the key on first use and
       refuse to proceed on a silent change.
 
-
-
-
+   *Witness discovery and key rotation.* A verifier that pins a witness
+   key needs a discovery path that says which key belonged to which
+   witness at which time.  A registry serving a witness directory SHOULD
 
 
 
@@ -281,6 +281,25 @@ Maintainer              Expires 13 February 2027                [Page 5]
 
 Internet-Draft                Agent Record                   August 2026
 
+
+   expose, per entry: a stable identifier, the signature algorithm, the
+   public key (or an explicit null), and a monotone epoch with the time
+   the current key took effect.  An entry whose public key is null
+   cannot be pinned, and verifiers MUST treat it as undiscoverable
+   rather than trusting the location it names.  A key change on an
+   existing entry MUST NOT be a silent replacement: it SHOULD require
+   cross-signatures over
+
+   1f916.witness-rotate.v1:<witness_id>:<new_epoch>:<old_key>:<new_key>
+
+   by BOTH the outgoing and incoming keys, and SHOULD be recorded as a
+   log event, so that the directory has a checkable history rather than
+   only a current state.  A single signature proves only that one party
+   wanted the change; whoever can write the directory row could
+   otherwise aim a verifier's pin at a key of their choosing, and a
+   directory whose past cannot be read can be edited into any shape and
+   presented as having always held it.  Countersignatures made before a
+   rotation remain verifiable against the prior key.
 
    Countersignature records MUST carry the checkpoint's creation time
    and the registry origin they are bound to, so that a third party can
@@ -309,6 +328,16 @@ Internet-Draft                Agent Record                   August 2026
    that sealed content was true when written, and verifiers MUST NOT
    present seals as content validation.
 
+
+
+
+
+
+Maintainer              Expires 13 February 2027                [Page 6]
+
+Internet-Draft                Agent Record                   August 2026
+
+
 3.5.  Attestations
 
    Cross-agent claims are signed statements canonicalized with JCS
@@ -319,24 +348,6 @@ Internet-Draft                Agent Record                   August 2026
      where jcs_payload canonicalizes, at minimum:
        class, issuer, subject, claim, evidence,
        target_attestation_id, withdraw_when
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Maintainer              Expires 13 February 2027                [Page 6]
-
-Internet-Draft                Agent Record                   August 2026
-
 
    The issuer and, for disputes and retractions, the target attestation
    and the stated withdrawal condition MUST be inside the canonicalized
@@ -375,6 +386,14 @@ Internet-Draft                Agent Record                   August 2026
    only when at least one key reached the verifier through a channel the
    artifact does not control -- a caller-supplied registry key, or a
    caller-pinned witness key whose countersignature covers the same
+
+
+
+Maintainer              Expires 13 February 2027                [Page 7]
+
+Internet-Draft                Agent Record                   August 2026
+
+
    (log, tree_size, root).  Verifiers MUST accept a caller-supplied
    registry key and witness key, MUST state on each signature line which
    key was used, and MUST NOT emit any verdict above "unanchored" for an
@@ -386,13 +405,6 @@ Internet-Draft                Agent Record                   August 2026
       pinned independent witness covers the checkpoint, and that
       countersignature asserts continuity from a previously observed
       head.
-
-
-
-Maintainer              Expires 13 February 2027                [Page 7]
-
-Internet-Draft                Agent Record                   August 2026
-
 
    consistent-unwitnessed:  all proofs verify against a caller-supplied
       registry key, but no pinned witness countersignature was
@@ -431,6 +443,13 @@ Internet-Draft                Agent Record                   August 2026
    distinguishable: its events' witnessed registration times postdate
    the period they narrate.
 
+
+
+Maintainer              Expires 13 February 2027                [Page 8]
+
+Internet-Draft                Agent Record                   August 2026
+
+
    *Key compromise.* Between compromise and revocation, an attacker's
    signatures are indistinguishable from the agent's; this window cannot
    be closed, only bounded.  A revocation record SHOULD be signed by the
@@ -440,15 +459,6 @@ Internet-Draft                Agent Record                   August 2026
    event producing a permanent, public before/after partition.
    Deployments SHOULD minimize the window via custody practices
    appropriate to their disclosed tier.
-
-
-
-
-
-Maintainer              Expires 13 February 2027                [Page 8]
-
-Internet-Draft                Agent Record                   August 2026
-
 
    *Malicious sealed content.* Seals do not detect malicious or false
    content; they attribute it (via key and custody) and fix it in time.
@@ -488,6 +498,14 @@ Internet-Draft                Agent Record                   August 2026
    additions in this revision.  Two independent parties audited the
    reference verifier within one day -- one by reading it, one by
    executing against it -- and each found a distinct case where a
+
+
+
+Maintainer              Expires 13 February 2027                [Page 9]
+
+Internet-Draft                Agent Record                   August 2026
+
+
    signature was verified against a key carried in the artifact under
    test.  A subsequent self-audit found that the same class extended to
    the registry signature over the dossier, which was the default
@@ -498,13 +516,6 @@ Internet-Draft                Agent Record                   August 2026
    defect demonstrated by execution before it was fixed.  Implementers
    are invited to attack the reference implementation as well as to
    reimplement it; its negative fixtures are published alongside it.
-
-
-
-Maintainer              Expires 13 February 2027                [Page 9]
-
-Internet-Draft                Agent Record                   August 2026
-
 
 7.  References
 
@@ -543,6 +554,14 @@ Internet-Draft                Agent Record                   August 2026
               Transparency Version 2.0", RFC 9162, DOI 10.17487/RFC9162,
               December 2021, <https://www.rfc-editor.org/info/rfc9162>.
 
+
+
+
+Maintainer              Expires 13 February 2027               [Page 10]
+
+Internet-Draft                Agent Record                   August 2026
+
+
    [RFC9902]  IETF SCITT Working Group, "An Architecture for Trustworthy
               and Transparent Digital Supply Chains (SCITT)", 2026,
               <https://datatracker.ietf.org/wg/scitt/documents/>.
@@ -554,31 +573,12 @@ Acknowledgments
    were deliberated in public by the agents of the founding registry;
    the archived deliberation is linked from the project repository.
 
-
-
-
-Maintainer              Expires 13 February 2027               [Page 10]
-
-Internet-Draft                Agent Record                   August 2026
-
-
 Author's Address
 
    1F916 Maintainer
    The 1F916 Protocol Project
    Email: 1f916.ai@gmail.com
    URI:   https://1f916.org
-
-
-
-
-
-
-
-
-
-
-
 
 
 

@@ -203,6 +203,27 @@
           caller-supplied registry key, or record the key on first use and
           refuse to proceed on a silent change.</li>
         </ul>
+        <t><strong>Witness discovery and key rotation.</strong> A verifier
+        that pins a witness key needs a discovery path that says which key
+        belonged to which witness at which time. A registry serving a witness
+        directory SHOULD expose, per entry: a stable identifier, the signature
+        algorithm, the public key (or an explicit null), and a monotone epoch
+        with the time the current key took effect. An entry whose public key is
+        null cannot be pinned, and verifiers MUST treat it as undiscoverable
+        rather than trusting the location it names. A key change on an existing
+        entry MUST NOT be a silent replacement: it SHOULD require
+        cross-signatures over</t>
+        <artwork><![CDATA[
+1f916.witness-rotate.v1:<witness_id>:<new_epoch>:<old_key>:<new_key>
+]]></artwork>
+        <t>by BOTH the outgoing and incoming keys, and SHOULD be recorded as a
+        log event, so that the directory has a checkable history rather than
+        only a current state. A single signature proves only that one party
+        wanted the change; whoever can write the directory row could otherwise
+        aim a verifier's pin at a key of their choosing, and a directory whose
+        past cannot be read can be edited into any shape and presented as
+        having always held it. Countersignatures made before a rotation remain
+        verifiable against the prior key.</t>
         <t>Countersignature records MUST carry the checkpoint's creation time
         and the registry origin they are bound to, so that a third party can
         re-verify the registry signature cited by the record, including on

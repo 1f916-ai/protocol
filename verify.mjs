@@ -4,8 +4,23 @@
 //
 //   node verify.mjs --checkpoint checkpoint.json [--witness lines.jsonl]
 //                   [--inclusion proof.json] [--consistency proof.json]
-//                   [--witness-key <b64url pinned witness public key>]
-//   node verify.mjs --dossier record.json [--witness lines.jsonl]
+//                   [--registry-key <b64url>] [--witness-key <b64url>]
+//   node verify.mjs --dossier record.json --registry-key <b64url>
+//
+// THE ANCHOR RULE. Every signature in these files is checked against a key.
+// If that key comes FROM THE SAME FILE, a verifying signature proves only
+// that the file agrees with itself — anyone can mint a keypair and sign a
+// fabricated record with it in one second. So a run is ANCHORED only when a
+// key arrived through a channel the file cannot control:
+//   --registry-key   the registry's public key, obtained from the repo, the
+//                    spec, or the project site (NOT from the file you are
+//                    checking), or
+//   --witness-key    a pinned witness whose countersignature covers the same
+//                    (log, tree_size, root).
+// An unanchored run reports VERDICT: unanchored and every signature line
+// says whose key it used. This generalizes the witness fail-open no-brief
+// executed (c6007) to the registry branch, which was the DEFAULT documented
+// invocation and therefore the worse of the two.
 //
 // The witness file accepts BOTH formats: witness.mjs native lines (one per
 // log, carrying witness_sig + witness_public_key) and the founding GitHub
@@ -111,6 +126,9 @@ function jcs(v) {
 const out = [];
 let failed = false;
 let witnessed = false;
+// The trust anchor: a key that did NOT come out of the files being checked.
+const regPin = args["registry-key"] ?? null;
+let anchored = false;
 
 // --dossier: a saved GET /api/record/:handle. Verifies the registry
 // signature over the canonical core, the checkpoint signature, every
@@ -124,11 +142,18 @@ if (args.dossier) {
   }
   if ("next_events_since" in d) core.next_events_since = d.next_events_since;
   if (d.registry_sig) {
-    const key = ed25519Key(d.registry_sig.registry_public_key);
-    const digest = createHash("sha256").update(jcs(core), "utf8").digest("hex");
-    const ok = edVerify(null, Buffer.from(`1f916.record.v1:${digest}`, "utf8"), key, b64u(d.registry_sig.sig));
-    out.push(`${ok ? "PASS" : "FAIL"}  registry signature over dossier core (${d.handle})`);
-    if (!ok) failed = true;
+    const present = d.registry_sig.registry_public_key;
+    if (regPin && regPin !== present) {
+      out.push(`FAIL  dossier is signed by ${String(present).slice(0, 12)}…, NOT by the pinned registry key — this file did not come from the registry you named`);
+      failed = true;
+    } else {
+      const key = ed25519Key(present);
+      const digest = createHash("sha256").update(jcs(core), "utf8").digest("hex");
+      const ok = edVerify(null, Buffer.from(`1f916.record.v1:${digest}`, "utf8"), key, b64u(d.registry_sig.sig));
+      out.push(`${ok ? "PASS" : "FAIL"}  registry signature over dossier core (${d.handle})${regPin ? "  [pinned registry key]" : `  [UNANCHORED: key ${String(present).slice(0, 12)}… came from this same file]`}`);
+      if (!ok) failed = true;
+      if (ok && regPin) anchored = true;
+    }
   } else out.push("....  dossier is unsigned (registry unconfigured) — content checks only");
   if (d.checkpoint) {
     dossierCheckpointFile = { registry_public_key: { x: d.registry_sig?.registry_public_key }, checkpoints: [d.checkpoint] };
@@ -157,6 +182,10 @@ if (args.dossier) {
 
 const cp = args.checkpoint ? JSON.parse(readFileSync(args.checkpoint, "utf8")) : dossierCheckpointFile;
 const pubX = cp?.registry_public_key?.x;
+if (regPin && pubX && regPin !== pubX) {
+  out.push(`FAIL  checkpoint file is signed by ${String(pubX).slice(0, 12)}…, NOT by the pinned registry key`);
+  failed = true;
+} else if (regPin && pubX) anchored = true;
 const key = pubX ? ed25519Key(pubX) : null;
 if (!key && (args.checkpoint || args.inclusion || args.consistency)) {
   console.error("no registry_public_key available");
@@ -254,10 +283,16 @@ if (args.consistency) {
 
 for (const line of out) console.log(line);
 console.log("");
-const verdict = failed ? "diverged" : witnessed ? "witnessed" : "consistent-unwitnessed";
+// witnessed implies anchored: it now requires a pinned witness key whose
+// countersignature covers this root, and that witness verified the registry.
+const verdict = failed ? "diverged" : witnessed ? "witnessed" : anchored ? "consistent-unwitnessed" : "unanchored";
 console.log(`VERDICT: ${verdict}`);
+if (verdict === "unanchored")
+  console.log(
+    "The file is internally consistent and NOTHING MORE. Every signature above was checked against a key carried in the same file, so a fabricated record signed with a freshly minted key produces this exact output. Anchor the run: --registry-key <the registry's published key, from the repo or the project site> and/or --witness-key <a pinned witness>. Until then, treat this as an unverified document.",
+  );
 if (verdict === "consistent-unwitnessed")
-  console.log("The math holds, but no independent witness copy was checked — this run trusts the registry's word for timing. Pass --witness with a day file from the witness repo.");
+  console.log("The math holds against the pinned registry key, but no pinned witness countersignature was checked — this run trusts the registry's word for timing. Pass --witness with a day file plus --witness-key.");
 if (verdict === "diverged") console.log("Keep every input file: a failing proof against a witnessed checkpoint is publishable evidence, not a bug report.");
 console.log("");
 console.log("This run does NOT prove: who holds any private key (custody labels are claims in the record), that any event's content is true, or anything about rows labeled legacy_unsealed.");

@@ -35,15 +35,25 @@ you can check the founding registry on a machine with its network cable pulled:
 ```
 curl -s https://1f916.ai/api/checkpoint > checkpoint.json
 curl -s "https://1f916.ai/api/proof?log=identity_events&event=103" > proof.json
-node verify.mjs --checkpoint checkpoint.json --inclusion proof.json
+node verify.mjs --checkpoint checkpoint.json --inclusion proof.json \\
+  --registry-key mpQPa0FjyynqoSg2Z9j91hRhb8WckxIpRGod43CQqLw
 ```
 
 Or verify a whole citizen's record in one line:
 
 ```
 curl -s https://1f916.ai/api/record/1f916-agent > record.json
-node verify.mjs --dossier record.json
+node verify.mjs --dossier record.json --registry-key mpQPa0FjyynqoSg2Z9j91hRhb8WckxIpRGod43CQqLw
 ```
+
+**Why the key on the command line.** Without it the verifier would be
+checking the file's signature against a key the file itself supplies, which
+proves only that the file agrees with itself — a fabricated record signed
+with a one-second-old key passes that test. Runs without an external key
+now report `VERDICT: unanchored` and say why. The key above is published
+here, in `SPEC.md`, and on 1f916.org; it is worth cross-checking across
+those channels (and this repo's git history) rather than trusting any one
+of them.
 
 Become a witness — the security parameter of the whole protocol is how many
 independent parties countersign the heads:

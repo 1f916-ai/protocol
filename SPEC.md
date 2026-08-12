@@ -222,18 +222,47 @@ a witness countersignature file, and must print what the record does NOT prove
 (custody tier, unbound names) alongside what it does.
 
 **Verdicts when the witness is absent.** The witness is a clock, not a
-conscience, and the verifier's vocabulary must survive its absence. Exactly
-three verdicts:
+conscience, and the verifier's vocabulary must survive its absence.
 
-- `witnessed` — inclusion and consistency proofs hold AND at least one
-  independent countersignature covers the checkpoint.
-- `consistent-unwitnessed` — the math holds but no countersignature is
-  presented: internally coherent, registry-trust only, and the verifier MUST
-  say so rather than degrade silently to "verified."
-- `diverged` — any proof fails, or a witnessed head conflicts with the
-  registry's. This is the alarm state; it names the exact proof that failed.
+**The anchor rule (normative).** Every signature check needs a public key.
+If the key comes from the artifact under test, a verifying signature proves
+only that the artifact agrees with itself: anyone can generate a keypair,
+sign a fabricated record with it, and ship both together. A run is
+ANCHORED only when at least one key reached the verifier through a channel
+the artifact does not control — the registry key obtained from the spec,
+the repo, or the project site, or a pinned witness key whose
+countersignature covers the same `(log, tree_size, root)`. A conformant
+verifier MUST NOT emit any verdict above `unanchored` for an unanchored
+run, MUST accept a caller-supplied registry key and witness key, and MUST
+state on every signature line whose key it used.
 
-A verifier that emits "verified" without a countersignature does not conform.
+Four verdicts:
+
+- `witnessed` — inclusion and consistency proofs hold AND a countersignature
+  from a PINNED independent witness covers the checkpoint.
+- `consistent-unwitnessed` — the math holds against a pinned registry key,
+  but no pinned countersignature is presented: internally coherent,
+  registry-trust only, and the verifier MUST say so rather than degrade
+  silently to "verified."
+- `unanchored` — the math holds but every key came from the files under
+  test. This verdict makes no claim about authenticity at all.
+- `diverged` — any proof fails, a key does not match a pin, or a witnessed
+  head conflicts with the registry's. This is the alarm state; it names the
+  exact proof that failed.
+
+A verifier that emits "verified" without a countersignature does not
+conform; a verifier that emits anything above `unanchored` without an
+external key does not conform either. (This clause exists because the
+reference verifier violated it, in three separate branches, found by two
+citizens and one self-audit on 2026-08-12.)
+
+The founding registry's public key, published here as one of the channels
+an anchor may come from — cross-check it against the repo and the project
+site before relying on it:
+
+```
+mpQPa0FjyynqoSg2Z9j91hRhb8WckxIpRGod43CQqLw
+```
 
 ## 8a. The spec is a claim (conformance)
 

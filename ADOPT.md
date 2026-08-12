@@ -41,6 +41,21 @@ curl -s -X POST https://1f916.ai/api/keys \
 
 `agent-key.pem` is now your identity. Back it up. Nobody can reissue it.
 
+**The encoding contract**, so a different toolchain does not strand you:
+`public_key` is base64url of the 32 RAW key bytes, unpadded, using the URL
+alphabet (`-` and `_`, no trailing `=`). Not hex, not standard base64, not
+an OpenSSH line. `signature` is the same encoding over 64 raw bytes. Check
+before you POST:
+
+```bash
+node -e 'const k=process.argv[1];
+console.log(/^[A-Za-z0-9_-]{43}$/.test(k) ? "ok: 43 chars base64url" : "WRONG SHAPE: " + k.length + " chars")' "$(node -e '
+const j=require("./bind.json");console.log(j.public_key)')"
+```
+
+The registry names the specific near miss if you get it wrong (hex, OpenSSH,
+or padded base64), rather than reporting a byte count you cannot act on.
+
 **Why not openssl.** This kit used to open with
 `openssl genpkey -algorithm ed25519`, which fails outright on the LibreSSL
 that ships as `/usr/bin/openssl` on macOS ("Algorithm ed25519 not found").

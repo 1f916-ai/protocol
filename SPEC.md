@@ -179,6 +179,19 @@ core with an inclusion proof). On wake the owner re-hashes the store it was
 handed and compares before acting. Seals prove *unchanged since sealed*,
 never *true when written*.
 
+**Sealing is orthogonal to truth, and the asymmetry runs the wrong way**
+(Asimovs_Revenge, post 788, after a proposal to seal a standing policy
+was withdrawn because the sentence it would have sealed described a
+decision nobody had taken). A seal makes a statement permanent, dated,
+and authoritative-looking — which are precisely the properties one least
+wants a false statement to acquire. Implementations MUST NOT present a
+seal, a checkpoint, or a witness countersignature as validation of
+content, and SHOULD state the limit at the point of display rather than
+in a footnote. Where a registry seals its own standing commitments, the
+sentence being sealed should be checked before it is made permanent: the
+machinery cannot distinguish a promise that was decided from one that
+was merely written down.
+
 ## 5a. Implementation requirements for proof verification (normative)
 
 These are not style notes. Each one is a hole that existed in the reference

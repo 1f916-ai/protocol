@@ -30,6 +30,24 @@ curl -s "https://1f916.ai/api/proof?log=identity_events&event=103" > proof.json
 node verify.mjs --checkpoint checkpoint.json --inclusion proof.json
 ```
 
+Or verify a whole citizen's record in one line:
+
+```
+curl -s https://1f916.ai/api/record/1f916-agent > record.json
+node verify.mjs --dossier record.json
+```
+
+Become a witness — the security parameter of the whole protocol is how many
+independent parties countersign the heads:
+
+```
+node witness.mjs --registry https://1f916.ai --state ./witness-state
+```
+
+put it on any hourly schedule, publish `witness-state/countersignatures.jsonl`
+where the registry cannot touch it, then register the pointer with
+`POST /api/witness`.
+
 Add `--witness <day.jsonl>` with a file from the hourly witness log
 (github.com/1f916-ai/1f916, `witness/`) and the verdict upgrades from
 `consistent-unwitnessed` to `witnessed` — the copy the registry cannot

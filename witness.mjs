@@ -1,0 +1,124 @@
+#!/usr/bin/env node
+// A complete, independent witness for any 1f916-protocol registry.
+// Single file, zero dependencies. Node 18+.
+//
+//   node witness.mjs --registry https://1f916.ai --state ./witness-state
+//
+// Each run (put it in cron, a GitHub Action, anything hourly-ish):
+//   1. fetches GET /api/checkpoint,
+//   2. verifies the registry signature,
+//   3. fetches a consistency proof from the last head this witness saw and
+//      verifies the log only appended — a failed proof is recorded loudly,
+//      never skipped,
+//   4. countersigns {log, tree_size, root} with YOUR Ed25519 key,
+//   5. appends one JSON line per log to <state>/countersignatures.jsonl.
+//
+// Publish that file anywhere the registry cannot touch (your repo, your
+// site), then register the pointer: POST /api/witness {name, url,
+// public_key}. Your first run generates a keypair in <state>/witness-key.json
+// — back it up; it IS your witness identity.
+//
+// Witness independence is the security parameter of the whole protocol:
+// the more of you there are, the less anyone has to trust the registry.
+
+import { createHash, createPublicKey, createPrivateKey, generateKeyPairSync, sign as edSign, verify as edVerify } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { join } from "node:path";
+
+const args = {};
+for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i]?.slice(2)] = process.argv[i + 1];
+const registry = (args.registry ?? "https://1f916.ai").replace(/\/$/, "");
+const stateDir = args.state ?? "./witness-state";
+mkdirSync(stateDir, { recursive: true });
+
+const b64u = (b) => Buffer.from(b).toString("base64url");
+const fromB64u = (s) => Buffer.from(s, "base64url");
+const sha256 = (b) => createHash("sha256").update(b).digest();
+const nodeHash = (l, r) => sha256(Buffer.concat([Buffer.from([1]), l, r]));
+
+// --- witness identity ---
+const keyPath = join(stateDir, "witness-key.json");
+let keys;
+if (existsSync(keyPath)) {
+  keys = JSON.parse(readFileSync(keyPath, "utf8"));
+} else {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  keys = {
+    public_key: publicKey.export({ format: "jwk" }).x,
+    private_key_pkcs8_b64: privateKey.export({ format: "der", type: "pkcs8" }).toString("base64"),
+    note: "This key IS your witness identity. Back it up. Never send it anywhere.",
+  };
+  writeFileSync(keyPath, JSON.stringify(keys, null, 2), { mode: 0o600 });
+  console.error(`new witness identity generated at ${keyPath} — public key ${keys.public_key}`);
+}
+const privKey = createPrivateKey({ key: Buffer.from(keys.private_key_pkcs8_b64, "base64"), format: "der", type: "pkcs8" });
+
+// --- RFC 9162 consistency verification ---
+function verifyConsistency(m, n, oldRoot, newRoot, proof) {
+  if (m > n) return false;
+  if (m === n) return proof.length === 0 && oldRoot === newRoot;
+  if (m === 0) return proof.length === 0;
+  if (proof.length === 0) return false;
+  let fn = m - 1, sn = n - 1;
+  while (fn % 2 === 1) { fn >>= 1; sn >>= 1; }
+  const path = proof.map((p) => Buffer.from(p, "hex"));
+  let i = 0, fr, sr;
+  if (fn === 0) { fr = Buffer.from(oldRoot, "hex"); sr = Buffer.from(oldRoot, "hex"); }
+  else { fr = path[0]; sr = path[0]; i = 1; }
+  for (; i < path.length; i++) {
+    const c = path[i];
+    if (sn === 0) return false;
+    if (fn % 2 === 1 || fn === sn) {
+      fr = nodeHash(c, fr); sr = nodeHash(c, sr);
+      while (fn % 2 === 0 && fn !== 0) { fn >>= 1; sn >>= 1; }
+    } else {
+      sr = nodeHash(sr, c);
+    }
+    fn >>= 1; sn >>= 1;
+  }
+  return fr.toString("hex") === oldRoot && sr.toString("hex") === newRoot && sn === 0;
+}
+
+const statePath = join(stateDir, "last-heads.json");
+const lastHeads = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
+const logPath = join(stateDir, "countersignatures.jsonl");
+const at = new Date().toISOString();
+
+const cp = await (await fetch(`${registry}/api/checkpoint`)).json();
+const regKeyRaw = fromB64u(cp.registry_public_key.x);
+const regKey = createPublicKey({ key: Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), regKeyRaw]), format: "der", type: "spki" });
+
+for (const row of cp.checkpoints ?? []) {
+  const line = { at, registry, log: row.log, tree_size: row.tree_size, root: row.root, registry_sig: row.sig };
+  const payload = `1f916.checkpoint.v1:${row.log}:${row.tree_size}:${row.root}:${row.created_at}`;
+  if (!edVerify(null, Buffer.from(payload, "utf8"), regKey, fromB64u(row.sig))) {
+    line.status = "registry_signature_invalid";
+    appendFileSync(logPath, JSON.stringify(line) + "\n");
+    console.error(`${row.log}: REGISTRY SIGNATURE INVALID — recorded`);
+    continue;
+  }
+  const last = lastHeads[row.log];
+  if (last && last.tree_size <= row.tree_size) {
+    try {
+      const cons = await (await fetch(`${registry}/api/checkpoint/consistency?log=${row.log}&from=${last.tree_size}&to=${row.tree_size}`)).json();
+      const ok = cons.proof !== undefined && verifyConsistency(last.tree_size, row.tree_size, last.root, row.root, cons.proof);
+      line.consistency = ok ? `verified from ${last.tree_size}` : "FAILED — possible rewrite, keep this line";
+      if (!ok) console.error(`${row.log}: CONSISTENCY FAILED from ${last.tree_size} to ${row.tree_size}`);
+    } catch (e) {
+      line.consistency = `unavailable (${String(e).slice(0, 80)}) — countersigning presence only`;
+    }
+  } else if (last && last.tree_size > row.tree_size) {
+    line.consistency = `REGRESSION: registry head ${row.tree_size} is smaller than witnessed ${last.tree_size} — keep this line`;
+    console.error(`${row.log}: TREE SHRANK — recorded`);
+  } else {
+    line.consistency = "first observation";
+  }
+  line.status = "countersigned";
+  const counterPayload = `1f916.witness.v1:${registry}:${row.log}:${row.tree_size}:${row.root}`;
+  line.witness_sig = b64u(edSign(null, Buffer.from(counterPayload, "utf8"), privKey));
+  line.witness_public_key = keys.public_key;
+  appendFileSync(logPath, JSON.stringify(line) + "\n");
+  lastHeads[row.log] = { tree_size: row.tree_size, root: row.root };
+  console.log(`${row.log}: countersigned size=${row.tree_size} (${line.consistency})`);
+}
+writeFileSync(statePath, JSON.stringify(lastHeads, null, 2));

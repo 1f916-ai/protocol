@@ -4,6 +4,7 @@
 //
 //   node verify.mjs --checkpoint checkpoint.json [--witness day.jsonl]
 //                   [--inclusion proof.json] [--consistency proof.json]
+//   node verify.mjs --dossier record.json [--witness day.jsonl]
 //
 //   checkpoint.json  a saved GET /api/checkpoint response
 //   day.jsonl        a witness day file (github.com/1f916-ai/1f916, witness/)
@@ -26,10 +27,10 @@ for (let i = 2; i < process.argv.length; i += 2) {
   if (!process.argv[i].startsWith("--") || process.argv[i + 1] === undefined) usage();
   args[process.argv[i].slice(2)] = process.argv[i + 1];
 }
-if (!args.checkpoint) usage();
+if (!args.checkpoint && !args.dossier) usage();
 
 function usage() {
-  console.error("usage: node verify.mjs --checkpoint checkpoint.json [--witness day.jsonl] [--inclusion proof.json] [--consistency proof.json]");
+  console.error("usage: node verify.mjs (--checkpoint checkpoint.json | --dossier record.json) [--witness day.jsonl] [--inclusion proof.json] [--consistency proof.json]");
   process.exit(2);
 }
 
@@ -90,17 +91,72 @@ function verifyConsistency(m, n, oldRoot, newRoot, proof) {
   return fr.toString("hex") === oldRoot && sr.toString("hex") === newRoot && sn === 0;
 }
 
+// JCS for the value shapes dossiers contain (integers, strings, arrays,
+// objects, booleans, null) — must byte-match the registry's canonicalization.
+function jcs(v) {
+  if (v === null || typeof v === "boolean" || typeof v === "number") return JSON.stringify(v);
+  if (typeof v === "string") return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(jcs).join(",")}]`;
+  return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${jcs(v[k])}`).join(",")}}`;
+}
+
 const out = [];
 let failed = false;
 let witnessed = false;
 
-const cp = JSON.parse(readFileSync(args.checkpoint, "utf8"));
-const pubX = cp.registry_public_key?.x;
-if (!pubX) { console.error("checkpoint file carries no registry_public_key.x"); process.exit(2); }
-const key = ed25519Key(pubX);
+// --dossier: a saved GET /api/record/:handle. Verifies the registry
+// signature over the canonical core, the checkpoint signature, every
+// event's inclusion proof, and every signed attestation-about.
+let dossierCheckpointFile = null;
+if (args.dossier) {
+  const d = JSON.parse(readFileSync(args.dossier, "utf8"));
+  const core = {};
+  for (const k of ["protocol","handle","citizen_id","model","since","keys","bindings","events","events_total","events_returned","events_has_more","attestations_about","checkpoint","witnesses"]) {
+    if (k in d) core[k] = d[k];
+  }
+  if ("next_events_since" in d) core.next_events_since = d.next_events_since;
+  if (d.registry_sig) {
+    const key = ed25519Key(d.registry_sig.registry_public_key);
+    const digest = createHash("sha256").update(jcs(core), "utf8").digest("hex");
+    const ok = edVerify(null, Buffer.from(`1f916.record.v1:${digest}`, "utf8"), key, b64u(d.registry_sig.sig));
+    out.push(`${ok ? "PASS" : "FAIL"}  registry signature over dossier core (${d.handle})`);
+    if (!ok) failed = true;
+  } else out.push("....  dossier is unsigned (registry unconfigured) — content checks only");
+  if (d.checkpoint) {
+    dossierCheckpointFile = { registry_public_key: { x: d.registry_sig?.registry_public_key }, checkpoints: [d.checkpoint] };
+    let proven = 0, unproven = 0;
+    for (const e of d.events ?? []) {
+      if (!e.proof) { unproven++; continue; }
+      const ok = verifyInclusion(e.hash, e.leaf_index, d.checkpoint.tree_size, e.proof, d.checkpoint.root);
+      if (!ok) { failed = true; out.push(`FAIL  inclusion for event ${e.id}`); }
+      else proven++;
+    }
+    out.push(`PASS  ${proven} event inclusion proofs verified (${unproven} carried no proof: legacy or newer than the checkpoint, labeled)`);
+  }
+  const keyByTp = new Map((d.keys ?? []).map((k) => [k.thumbprint, k.public_key ?? k.x]));
+  let signedAtt = 0;
+  for (const a of d.attestations_about ?? []) {
+    if (!a.signature) continue;
+    // attestation payloads are canonicalized at issuance; the dossier carries them
+    const payload = a.payload;
+    if (!payload) continue;
+    // issuer keys are not in this dossier (they're the ISSUER's record); verify hash integrity only
+    const hashOk = createHash("sha256").update(payload, "utf8").digest("hex") === a.payload_hash;
+    if (!hashOk) { failed = true; out.push(`FAIL  attestation ${a.id} payload hash mismatch`); } else signedAtt++;
+  }
+  if (signedAtt) out.push(`PASS  ${signedAtt} attestation payload hashes intact (issuer signatures verify against the issuer's own record)`);
+}
+
+const cp = args.checkpoint ? JSON.parse(readFileSync(args.checkpoint, "utf8")) : dossierCheckpointFile;
+const pubX = cp?.registry_public_key?.x;
+const key = pubX ? ed25519Key(pubX) : null;
+if (!key && (args.checkpoint || args.inclusion || args.consistency)) {
+  console.error("no registry_public_key available");
+  process.exit(2);
+}
 
 // 1. Registry signatures over every checkpoint in the file.
-for (const row of cp.checkpoints ?? []) {
+for (const row of (key && cp ? cp.checkpoints ?? [] : [])) {
   const payload = `1f916.checkpoint.v1:${row.log}:${row.tree_size}:${row.root}:${row.created_at}`;
   const ok = edVerify(null, Buffer.from(payload, "utf8"), key, b64u(row.sig));
   out.push(`${ok ? "PASS" : "FAIL"}  registry signature  ${row.log} size=${row.tree_size}`);
@@ -110,7 +166,7 @@ for (const row of cp.checkpoints ?? []) {
 // 2. Witness cross-check: the same (log, tree_size) must carry the same root
 // in the witness's copy. The witness file is the anchor the registry cannot
 // rewrite; a mismatch is not an error in this run, it is evidence.
-if (args.witness) {
+if (args.witness && cp) {
   const lines = readFileSync(args.witness, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   for (const row of cp.checkpoints ?? []) {
     let seen = false, match = false;

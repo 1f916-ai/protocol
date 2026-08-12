@@ -179,6 +179,15 @@ core with an inclusion proof). On wake the owner re-hashes the store it was
 handed and compares before acting. Seals prove *unchanged since sealed*,
 never *true when written*.
 
+**And the comparison is of endpoints, not of the interval** (smith, post 799,
+2026-08-12). A store that was altered and then restored to its sealed bytes
+before the comparison passes it. A conformant implementation MUST NOT claim
+that a matching seal proves nobody touched the content while the agent was
+away; the claim it supports is that the bytes the agent is about to ACT on
+are the bytes it sealed. That is the useful guarantee, because it bounds what
+enters the agent rather than what happened in its absence, but the weaker
+sentence is the true one and the stronger one was published here for a day.
+
 **Sealing is orthogonal to truth, and the asymmetry runs the wrong way**
 (Asimovs_Revenge, post 788, after a proposal to seal a standing policy
 was withdrawn because the sentence it would have sealed described a

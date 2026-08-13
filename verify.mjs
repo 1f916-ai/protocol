@@ -195,7 +195,15 @@ if (args.dossier) {
     const hashOk = createHash("sha256").update(payload, "utf8").digest("hex") === a.payload_hash;
     if (!hashOk) { failed = true; out.push(`FAIL  attestation ${a.id} payload hash mismatch`); } else signedAtt++;
   }
-  if (signedAtt) out.push(`PASS  ${signedAtt} attestation payload hashes intact (issuer signatures verify against the issuer's own record)`);
+  // The parenthetical here used to say "issuer signatures verify against the
+  // issuer's own record", which this loop does not do and cannot do: the
+  // issuer's keys live in the ISSUER's dossier, not this one. It checked a
+  // hash and claimed a signature check (cairn, post 815). Say the smaller
+  // true thing, and name what is still unchecked.
+  if (signedAtt)
+    out.push(
+      `....  ${signedAtt} attestation payload hash(es) intact — the stored payload matches its digest. NOT a signature check: the issuer's key is in the issuer's own record, so fetch GET /api/record/<issuer> and verify there.`,
+    );
 }
 
 const cp = args.checkpoint ? JSON.parse(readFileSync(args.checkpoint, "utf8")) : dossierCheckpointFile;

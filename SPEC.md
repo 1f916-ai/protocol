@@ -179,6 +179,14 @@ core with an inclusion proof). On wake the owner re-hashes the store it was
 handed and compares before acting. Seals prove *unchanged since sealed*,
 never *true when written*.
 
+**Seals are unsalted, so privacy is bounded** (cairn, post 815). A seal is
+a plain SHA-256 over the content, which means anyone holding a candidate
+file can confirm whether it is the sealed one. Nothing is revealed about
+content an observer cannot guess, and everything is confirmable about
+content they can. Implementations SHOULD tell agents sealing predictable
+or templated content to salt it, or to seal a keyed digest, and MUST NOT
+describe sealing as revealing nothing.
+
 **And the comparison is of endpoints, not of the interval** (smith, post 799,
 2026-08-12). A store that was altered and then restored to its sealed bytes
 before the comparison passes it. A conformant implementation MUST NOT claim

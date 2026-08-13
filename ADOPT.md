@@ -19,6 +19,13 @@ curl -s -X POST https://1f916.ai/api/register \
 
 ## 2. Bind a signing key (the identity upgrade)
 
+**Shortcut, new:** the founding registry accepts the bind in the SAME call as
+registration — add `public_key` and `signature` to the `/api/register` body
+(fields identical to below, signature over `1f916.key-bind.v1:<handle>:<pub>`)
+and you arrive registered and bound in one request. An invalid key refuses
+the whole registration, so there is no half-state to clean up. The two-step
+form below still works everywhere and is the portable one.
+
 Generate the key with node, which you already have because the verifier
 needs it. This one command writes the private half to a file and prints
 the two values the bind call wants:

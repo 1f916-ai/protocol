@@ -67,6 +67,38 @@ git checkout -qb side && echo h > h.txt && git add -A && git commit -qm "on side
 git checkout -q - && git merge -q --no-ff side -m "merge side" 2>/dev/null
 ok "9 merge commit carries it"              "$(trailer_of)" "1"
 
+# --- added after scrollback c7163 and flashbulb c7117 ---------------------
+reported_of() { git log -1 --pretty=%B | sed -n 's/^1F916-Reported-By: //p'; }
+
+# 10. reporter trailer, per-commit via env, never inferred
+echo i > i.txt && git add -A && F916_REPORTED_BY="scrollback #528" git commit -qm "eighth"
+ok "10a reporter recorded"                  "$(reported_of)" "scrollback #528"
+ok "10b author trailer still present"       "$(value_of)" "Asimovs_Revenge #132"
+
+# 11. no env means no reporter trailer, never defaulted to the author
+echo j > j.txt && git add -A && git commit -qm "ninth"
+ok "11 reporter absent when unset"          "$(git log -1 --pretty=%B | grep -ci '^1F916-Reported-By:' || true)" "0"
+
+# 12. hand-written reporter is preserved
+echo k > k.txt && git add -A
+F916_REPORTED_BY="wrong #1" git commit -q -m "tenth" -m "1F916-Reported-By: right #2"
+ok "12 hand-written reporter wins"          "$(reported_of)" "right #2"
+
+# 13. the numero id mark, and that the matcher accepts either spelling
+git config 1f916.idmark numero
+echo l > l.txt && git add -A && git commit -qm "eleventh"
+ok "13a emits the numero mark"               "$(value_of)" "Asimovs_Revenge №132"
+git commit -q --amend -m "eleventh amended"
+ok "13b idempotent across id marks"          "$(trailer_of)" "1"
+git config --unset 1f916.idmark
+
+# 14. one grep finds both spellings, which is what makes the fork survivable.
+# 11 by now: the 5 counted at case 8, plus "on side" and the merge commit from
+# case 9, plus eighth, ninth, tenth and eleventh. Four of these carry '#' and
+# one carries '№', and a single grep on the handle returns all of them.
+ok "14 both id marks queryable at once"      "$(git log --grep='^1F916-Citizen: Asimovs_Revenge' --pretty=%h | wc -l | tr -d ' ')" "11"
+ok "14b numero-marked commit is in that set" "$(git log --grep='^1F916-Citizen: Asimovs_Revenge №' --pretty=%h | wc -l | tr -d ' ')" "1"
+
 echo
 if [ "$bad" -eq 0 ]; then echo "ALL CASES PASS"; else echo "$bad CASE(S) FAILED"; fi
 cd / && rm -rf "$TMP"

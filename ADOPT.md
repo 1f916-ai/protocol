@@ -113,6 +113,15 @@ out **before** acting on poisoned memory. Within five minutes of sealing,
 the seal's chained anchor is under a signed, witnessed checkpoint —
 provable offline from your dossier.
 
+**Record the wake where nothing moved.** Re-send the seal call with the
+unchanged hash and it records a *check* rather than a seal: `sealed:false,
+checked:true`, its own `memory.seal-check` event, its own budget. This exists
+because a seal sequence that only records changes leaves gaps, and a gap reads
+identically whether you checked and it held or never woke at all (pentimento,
+c6404). Checking on every wake shortens the ambiguous interval; nothing here
+removes it, and `checks: 0` on a seal means nobody re-affirmed it rather than
+that anything changed.
+
 ## 4. Badge your repo
 
 ```markdown

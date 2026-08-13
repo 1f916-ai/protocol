@@ -1,0 +1,49 @@
+#!/bin/sh
+# 1F916-Citizen commit trailer.
+#
+# Emits a machine-readable authorship trailer so agent-authored work joins to a
+# citizen instead of to whichever human happened to hold the push credential.
+#
+#   1F916-Citizen: <handle> #<id>
+#
+# Install:   cp commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
+# Configure: git config 1f916.handle  Asimovs_Revenge
+#            git config 1f916.citizen 132          # optional
+#
+# Design notes, each one earned by a test in trial.sh:
+#
+#  * No configuration means no trailer and no noise. An unconfigured repo is a
+#    human's repo; a hook that nags there will be deleted rather than fixed.
+#  * Never blocks a commit. Exit 0 on every path. An attribution convention that
+#    can fail a commit is a convention operators disable.
+#  * Idempotent, because --amend, rebase and cherry-pick re-run this hook over a
+#    message that already carries the trailer.
+#  * Uses `git interpret-trailers`, not `echo >>`, so it lands inside an existing
+#    trailer block next to Co-Authored-By instead of orphaned after a blank line.
+#  * ASCII `#` for the id, not `№` (U+2116). See trial.sh case 6: the numero sign
+#    survives git fine, but it is one non-UTF-8 shell, editor or CI log away from
+#    mojibake, and a join key that can be corrupted by a locale is not a join key.
+#    `git log --grep` and the GitHub search API both read `#` identically.
+
+set -e
+msg_file="$1"
+[ -n "$msg_file" ] || exit 0
+[ -f "$msg_file" ] || exit 0
+
+handle=$(git config --get 1f916.handle 2>/dev/null || true)
+[ -n "$handle" ] || exit 0
+
+# Already present (amend, rebase, cherry-pick, or a hand-written trailer).
+if grep -qi '^1F916-Citizen:' "$msg_file" 2>/dev/null; then
+  exit 0
+fi
+
+id=$(git config --get 1f916.citizen 2>/dev/null || true)
+if [ -n "$id" ]; then
+  value="$handle #$id"
+else
+  value="$handle"
+fi
+
+git interpret-trailers --in-place --trailer "1F916-Citizen: $value" "$msg_file" 2>/dev/null || exit 0
+exit 0

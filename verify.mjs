@@ -144,6 +144,11 @@ function jcs(v) {
 const out = [];
 let failed = false;
 let witnessed = false;
+// A witness file was supplied and yielded no applicable line. Distinct from
+// never asking: 'I did not ask' and 'I asked and nothing arrived' are
+// different states, and only the second means somebody should go look
+// (justingwatford-dev / Asimovs_Revenge, protocol#1).
+let witnessAskedAndEmpty = false;
 // The trust anchor: a key that did NOT come out of the files being checked.
 const regPin = args["registry-key"] ?? null;
 let anchored = false;
@@ -320,6 +325,7 @@ if (args.witness && cp) {
           : newest < row.tree_size
             ? `this file's newest line for that log is size=${newest}, older than your record. Refetch the day file in a few minutes: witnesses record on a schedule, and yours has not caught up yet.`
             : `this file covers sizes ${[...new Set(seen)].sort((a, b) => a - b).slice(-6).join(", ")} for that log but not ${row.tree_size}. Not every checkpoint gets witnessed, so refetch the RECORD to pin it to a newer head rather than hunting for a file that covers this one.`;
+      witnessAskedAndEmpty = true;
       out.push(`....  no witness line for ${row.log} size=${row.tree_size} — ${hint}`);
     }
   }
@@ -351,7 +357,21 @@ for (const line of out) console.log(line);
 console.log("");
 // witnessed implies anchored: it now requires a pinned witness key whose
 // countersignature covers this root, and that witness verified the registry.
-const verdict = failed ? "diverged" : witnessed ? "witnessed" : anchored ? "consistent-unwitnessed" : "unanchored";
+// witness-unusable ranks above the unwitnessed verdicts and below a real
+// failure: the record may be fine, but the check the caller ASKED for could
+// not be performed, and reporting that as though no witness had been
+// requested makes the verdict string and the exit code — the two things
+// people quote and branch on — byte-identical to a run that never asked.
+const witnessUnusable = witnessAskedAndEmpty && !witnessed && !failed;
+const verdict = failed
+  ? "diverged"
+  : witnessed
+    ? "witnessed"
+    : witnessUnusable
+      ? "witness-unusable"
+      : anchored
+        ? "consistent-unwitnessed"
+        : "unanchored";
 console.log(`VERDICT: ${verdict}`);
 if (verdict === "unanchored")
   console.log(
@@ -359,7 +379,11 @@ if (verdict === "unanchored")
   );
 if (verdict === "consistent-unwitnessed")
   console.log("The math holds against the pinned registry key, but no pinned witness countersignature was checked — this run trusts the registry's word for timing. Pass --witness with a day file plus --witness-key.");
+if (verdict === "witness-unusable")
+  console.log(
+    "You passed --witness and the file carried no line this run could apply, so no countersignature was checked. The record itself may be perfectly sound: this verdict is about the RUN, not about the record. Re-fetch the day file (use curl -sf, so a 404 body cannot land in it as if it were data) and try again. This is deliberately not reported as 'consistent-unwitnessed', because asking and receiving nothing is a different state from never asking, and only the first one means somebody should go look.",
+  );
 if (verdict === "diverged") console.log("Keep every input file: a failing proof against a witnessed checkpoint is publishable evidence, not a bug report.");
 console.log("");
 console.log("This run does NOT prove: who holds any private key (custody labels are claims in the record), that any event's content is true, or anything about rows labeled legacy_unsealed.");
-process.exit(failed ? 1 : 0);
+process.exit(failed ? 1 : verdict === "witness-unusable" ? 3 : 0);

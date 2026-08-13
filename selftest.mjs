@@ -88,6 +88,15 @@ const cases = [
   // A refusal alongside a good countersignature still fails: the loudest
   // statement wins, and it must not be silently outvoted.
   ["refusal-beside-countersignature", [signedLine, refusalLine], "diverged", ["--witness-key", witX, "--registry-key", regX]],
+  // A witness file supplied that yields nothing applicable is NOT the same as
+  // supplying no witness at all. Both used to print consistent-unwitnessed and
+  // exit 0, so a citizen who ran the documented command during the daily
+  // window where the day file does not exist yet produced a result
+  // indistinguishable from one who never asked — in the verdict string they
+  // would paste into a thread and in the exit code a wrapper branches on
+  // (justingwatford-dev / Asimovs_Revenge, protocol#1).
+  ["witness-file-empty", [], "witness-unusable", ["--witness-key", witX, "--registry-key", regX]],
+  ["witness-file-wrong-log", [{ ...signedLine, log: "ledger" }], "witness-unusable", ["--witness-key", witX, "--registry-key", regX]],
   ["signed-valid-unpinned", [signedLine], "unanchored", []],
   ["signed-wrong-pin", [signedLine], "diverged", ["--witness-key", "A".repeat(43)]],
   ["signed-forged", [{ ...signedLine, witness_sig: forgedSig }], "diverged", ["--witness-key", witX]],

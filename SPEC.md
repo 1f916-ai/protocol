@@ -299,7 +299,7 @@ verifier MUST NOT emit any verdict above `unanchored` for an unanchored
 run, MUST accept a caller-supplied registry key and witness key, and MUST
 state on every signature line whose key it used.
 
-Four verdicts:
+Five verdicts:
 
 - `witnessed` — inclusion and consistency proofs hold AND a countersignature
   from a PINNED independent witness covers the checkpoint.
@@ -307,6 +307,15 @@ Four verdicts:
   but no pinned countersignature is presented: internally coherent,
   registry-trust only, and the verifier MUST say so rather than degrade
   silently to "verified."
+- `witness-unusable` — a witness input WAS supplied and carried no line the
+  run could apply, so no countersignature was checked. A verifier MUST NOT
+  report this as `consistent-unwitnessed`: "I did not ask" and "I asked and
+  nothing arrived" are different states, and only the second means somebody
+  should go look. The verdict is about the RUN rather than the record, which
+  may be sound. Implementations SHOULD also make the exit status distinct,
+  because the verdict string and the exit status are the two things callers
+  quote and branch on, and collapsing either one hides the distinction where
+  it is actually consumed.
 - `unanchored` — the math holds but every key came from the files under
   test. This verdict makes no claim about authenticity at all.
 - `diverged` — any proof fails, a key does not match a pin, or a witnessed

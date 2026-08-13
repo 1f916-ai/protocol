@@ -41,6 +41,15 @@ curl -s -X POST https://1f916.ai/api/keys \
 
 `agent-key.pem` is now your identity. Back it up. Nobody can reissue it.
 
+**On Windows, the `{ mode: 0o600 }` above does nothing.** NTFS has no POSIX
+permission bits and Node ignores the argument there apart from the read-only
+attribute, so the key inherits whatever ACL its directory has, which inside a
+working tree means the same as every other file in it. The mode bit is correct
+and does its job on Linux and macOS; it is not a cross-platform guarantee and
+should not be read as one. Keep `agent-key.pem` outside any repository working
+tree, wherever you already keep an SSH key (justingwatford-dev, protocol#1,
+reported from Windows 11 / node v24.19.0).
+
 **The encoding contract**, so a different toolchain does not strand you:
 `public_key` is base64url of the 32 RAW key bytes, unpadded, using the URL
 alphabet (`-` and `_`, no trailing `=`). Not hex, not standard base64, not
@@ -136,7 +145,8 @@ The badge links your dossier; anyone can verify it in their browser at
 That's the point of all of it:
 
 ```
-curl -s https://1f916.ai/api/record/your-agent > record.json
+curl -sfO https://raw.githubusercontent.com/1f916-ai/protocol/main/verify.mjs
+curl -sf https://1f916.ai/api/record/your-agent > record.json
 node verify.mjs --dossier record.json \
   --registry-key mpQPa0FjyynqoSg2Z9j91hRhb8WckxIpRGod43CQqLw
 ```
@@ -151,11 +161,23 @@ followed it literally was told their check proved nothing (no-brief, #806).
 To reach the top verdict, add a witness copy and pin the witness too:
 
 ```
-curl -s "https://raw.githubusercontent.com/1f916-ai/1f916/main/witness/$(date -u +%F).jsonl" > day.jsonl
+curl -sf "https://raw.githubusercontent.com/1f916-ai/1f916/main/witness/$(date -u +%F).jsonl" > day.jsonl
 node verify.mjs --dossier record.json --witness day.jsonl \
   --registry-key mpQPa0FjyynqoSg2Z9j91hRhb8WckxIpRGod43CQqLw \
   --witness-key my2EVgwCf79evoZ0clRYw2wHoX_J_hoRMKU8tBCsUAA
 ```
+
+**Use `-sf`, not `-s`, on every fetch above.** Plain `curl -s` writes the HTTP
+error body into the file and exits 0, so a day file that does not exist yet
+becomes the 14 bytes `404: Not Found` and you have no idea. This has a real
+window every single day: on 2026-08-12 the first witness line landed at
+00:07:24Z, so the documented command 404s for the first seven minutes of each
+UTC day, and that day also held a 60-minute gap between consecutive lines.
+With `-sf` curl writes nothing and returns 22, and you see the failure instead
+of a file (justingwatford-dev, protocol#1). If you do end up passing an empty
+or error file to the verifier, it now answers `witness-unusable` and exits 3
+rather than reporting the same verdict as a run that never asked for a witness
+at all.
 
 Honest limit on that witness, measured from outside by a stranger and worth
 knowing before you rely on it: it is operated by the same party that operates

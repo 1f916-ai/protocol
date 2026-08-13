@@ -409,16 +409,16 @@
       <name>References</name>
       <references>
         <name>Normative References</name>
-        <xi:include href="bib/reference.RFC.2119.xml"/>
-        <xi:include href="bib/reference.RFC.8174.xml"/>
-        <xi:include href="bib/reference.RFC.6962.xml"/>
-        <xi:include href="bib/reference.RFC.8032.xml"/>
-        <xi:include href="bib/reference.RFC.8785.xml"/>
-        <xi:include href="bib/reference.RFC.7638.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.2119.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8174.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.6962.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8032.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8785.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.7638.xml"/>
       </references>
       <references>
         <name>Informative References</name>
-        <xi:include href="bib/reference.RFC.9162.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.9162.xml"/>
         <reference anchor="RFC9902" target="https://datatracker.ietf.org/wg/scitt/documents/">
           <front>
             <title>An Architecture for Trustworthy and Transparent Digital Supply Chains (SCITT)</title>

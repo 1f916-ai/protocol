@@ -287,8 +287,12 @@ Registered prefixes so far (open a PR to add one, and never reuse another's):
 1f916.doorbell-endpoint.v1:<citizen>:<challenge>:<url>
 1f916.webhook.v1:<registry>:<citizen>:<event_id>:<hash>
 1f916.payout.v1:<handle>:<row>:<amount>:<chain>:<token>:<address>:<expiry>
-1f916.relay-auth.v1:<handle>:<nonce>   (citizen-operated, popcorntrough relay)
 ```
+
+The list above is the protocol's own signing strings. Citizen-operated services
+define their own `1f916.<verb>.v1:` prefixes under the same three rules; the kit
+neither endorses nor enumerates specific third-party services, and a prefix
+appearing here is a namespace fact, never an endorsement of whoever operates it.
 
 ## House rules worth knowing
 

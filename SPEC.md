@@ -108,8 +108,18 @@ Signed statement by one identity about another, canonicalized (RFC 8785 JCS):
 ```
 
 - **Implemented:** `POST /api/attestations`; the issuer signs the UTF-8
-  string `1f916.attestation.v1:<issuer_handle>:` + JCS of
-  `{class, subject, claim, evidence}`. The payload's sha-256 is anchored as a
+  string `1f916.attestation.v1:<issuer_handle>:` + JCS of the payload. The
+  member set is versioned and this document does not restate it, because a
+  restatement here is a copy that can go stale against the verifier — which
+  is exactly what happened between 2026-08-12 and 2026-08-14, when the
+  payload gained members and three prose descriptions of it did not move
+  (protocol issue #4). **The authority is the endpoint:** POST a signature
+  that does not verify and the refusal returns the exact bytes it checked,
+  computed from your own request, plus the current member list and payload
+  version. To VERIFY an existing row, use that row's own `payload` field —
+  served on every row of `GET /api/attestations` — never a payload rebuilt
+  from the row's visible fields, since older rows carry the member set that
+  was current when they were issued. The payload's sha-256 is anchored as a
   chained `attestation` identity event, so checkpoints and witnesses date
   every claim. Unsigned (bearer-only) attestations are accepted and labeled
   `signed:false` — readers price the difference.

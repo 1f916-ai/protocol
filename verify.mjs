@@ -331,26 +331,96 @@ if (args.witness && cp) {
   }
 }
 
+// A file handed to --inclusion or --consistency may not be a proof at all.
+// The commonest case is an ERROR ENVELOPE: ask /api/checkpoint/consistency for
+// a tree size that has no checkpoint and it answers 404 with {error: "..."},
+// which is valid JSON and parses fine. Reaching into it for `event.hash` threw
+// a TypeError with a stack trace and NO VERDICT line, so automation that
+// branches on the verdict string — the thing this file's own README teaches
+// people to grep for — got a crash instead of a controlled failure
+// (tcconnally, protocol issue #6). Parse and shape are checked before any
+// proof math runs, and a bad file FAILS like every other bad proof.
+function readProofFile(path, kind, required) {
+  let raw;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (e) {
+    return { bad: `${path} could not be read (${e.code ?? e.message})` };
+  }
+  let obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch (e) {
+    return { bad: `${path} is not JSON (${e.message})` };
+  }
+  if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
+    return { bad: `${path} is JSON but not an object` };
+  }
+  const missing = required.filter((field) => {
+    let cur = obj;
+    for (const part of field.split(".")) {
+      if (cur === null || typeof cur !== "object" || !(part in cur)) return true;
+      cur = cur[part];
+    }
+    return cur === undefined;
+  });
+  if (missing.length) {
+    // The server's own error text, when that is what this is, says more than
+    // any list of absent fields.
+    const said = typeof obj.error === "string" ? ` The file says: ${obj.error.replace(/\.?$/, ".")}` : "";
+    return { bad: `${path} is not ${kind} — missing ${missing.join(", ")}.${said}` };
+  }
+  return { proof: obj };
+}
+
 // 3. Inclusion proof.
 if (args.inclusion) {
-  const pr = JSON.parse(readFileSync(args.inclusion, "utf8"));
-  const ok = verifyInclusion(pr.event.hash, pr.event.leaf_index, pr.checkpoint.tree_size, pr.proof, pr.checkpoint.root);
-  const sigOk = edVerify(
-    null,
-    Buffer.from(`1f916.checkpoint.v1:${pr.log}:${pr.checkpoint.tree_size}:${pr.checkpoint.root}:${pr.checkpoint.created_at}`, "utf8"),
-    key,
-    b64u(pr.checkpoint.sig),
-  );
-  out.push(`${ok && sigOk ? "PASS" : "FAIL"}  inclusion  ${pr.log} event=${pr.event.id} index=${pr.event.leaf_index} under size=${pr.checkpoint.tree_size}`);
-  if (!(ok && sigOk)) failed = true;
+  const read = readProofFile(args.inclusion, "an inclusion proof", [
+    "log",
+    "event.hash",
+    "event.leaf_index",
+    "proof",
+    "checkpoint.tree_size",
+    "checkpoint.root",
+    "checkpoint.sig",
+    "checkpoint.created_at",
+  ]);
+  if (read.bad) {
+    failed = true;
+    out.push(`FAIL  inclusion  ${read.bad} Keep the file: a refusal is evidence too.`);
+  } else {
+    const pr = read.proof;
+    const ok = verifyInclusion(pr.event.hash, pr.event.leaf_index, pr.checkpoint.tree_size, pr.proof, pr.checkpoint.root);
+    const sigOk = edVerify(
+      null,
+      Buffer.from(`1f916.checkpoint.v1:${pr.log}:${pr.checkpoint.tree_size}:${pr.checkpoint.root}:${pr.checkpoint.created_at}`, "utf8"),
+      key,
+      b64u(pr.checkpoint.sig),
+    );
+    out.push(`${ok && sigOk ? "PASS" : "FAIL"}  inclusion  ${pr.log} event=${pr.event.id} index=${pr.event.leaf_index} under size=${pr.checkpoint.tree_size}`);
+    if (!(ok && sigOk)) failed = true;
+  }
 }
 
 // 4. Consistency proof.
 if (args.consistency) {
-  const pr = JSON.parse(readFileSync(args.consistency, "utf8"));
-  const ok = verifyConsistency(pr.from.tree_size, pr.to.tree_size, pr.from.root, pr.to.root, pr.proof);
-  out.push(`${ok ? "PASS" : "FAIL"}  consistency  ${pr.log} ${pr.from.tree_size} -> ${pr.to.tree_size} (append-only between checkpoints)`);
-  if (!ok) failed = true;
+  const read = readProofFile(args.consistency, "a consistency proof", [
+    "log",
+    "proof",
+    "from.tree_size",
+    "from.root",
+    "to.tree_size",
+    "to.root",
+  ]);
+  if (read.bad) {
+    failed = true;
+    out.push(`FAIL  consistency  ${read.bad} Keep the file: a refusal is evidence too.`);
+  } else {
+    const pr = read.proof;
+    const ok = verifyConsistency(pr.from.tree_size, pr.to.tree_size, pr.from.root, pr.to.root, pr.proof);
+    out.push(`${ok ? "PASS" : "FAIL"}  consistency  ${pr.log} ${pr.from.tree_size} -> ${pr.to.tree_size} (append-only between checkpoints)`);
+    if (!ok) failed = true;
+  }
 }
 
 for (const line of out) console.log(line);

@@ -243,4 +243,135 @@ for (const [name, size] of bigSizes) {
   if (!ok) bad++;
 }
 
+// The consistency path has its OWN halving: a `while (fn % 2 === 1)` pre-loop
+// and a second halving inside the fold. SearlesBox pointed out on protocol
+// issue #5 that an inclusion fixture does not exercise either of them, so the
+// same shift bug could survive above in verifyConsistency alone.
+//
+// RFC 9162 2.1.4.2, written out with explicit division. Seeded from path[0]
+// rather than from oldRoot, which is only possible when fn is non-zero after
+// the pre-loop; that is why m is chosen even below. When fn reaches 0 the
+// algorithm seeds from oldRoot itself and the roots cannot be derived forward.
+function refConsistencyRoots(m, n, pathHex) {
+  let fn = m - 1, sn = n - 1;
+  while (fn % 2 === 1) { fn = Math.floor(fn / 2); sn = Math.floor(sn / 2); }
+  if (fn === 0) throw new Error("fixture needs fn != 0 after the pre-loop; pick a different m");
+  const path = pathHex.map((h) => Buffer.from(h, "hex"));
+  let fr = path[0], sr = path[0], i = 1;
+  for (; i < path.length; i++) {
+    const c = path[i];
+    if (sn === 0) throw new Error("path too long for these sizes");
+    if (fn % 2 === 1 || fn === sn) {
+      fr = refNode(c, fr); sr = refNode(c, sr);
+      while (fn % 2 === 0 && fn !== 0) { fn = Math.floor(fn / 2); sn = Math.floor(sn / 2); }
+    } else {
+      sr = refNode(sr, c);
+    }
+    fn = Math.floor(fn / 2); sn = Math.floor(sn / 2);
+  }
+  if (sn !== 0) throw new Error("path too short for these sizes");
+  return { oldRoot: fr.toString("hex"), newRoot: sr.toString("hex") };
+}
+
+// Depth for the consistency walk: how many iterations the fold above consumes,
+// counted by running the same walk with a path long enough that sn bottoms out.
+function consistencyDepth(m, n) {
+  let fn = m - 1, sn = n - 1, d = 1;
+  while (fn % 2 === 1) { fn = Math.floor(fn / 2); sn = Math.floor(sn / 2); }
+  while (sn !== 0) {
+    if (fn % 2 === 1 || fn === sn) { while (fn % 2 === 0 && fn !== 0) { fn = Math.floor(fn / 2); sn = Math.floor(sn / 2); } }
+    fn = Math.floor(fn / 2); sn = Math.floor(sn / 2); d++;
+  }
+  return d;
+}
+
+// m must not be a power of two: fn = m - 1 would then be all 1-bits, the
+// pre-loop strips every one of them, fn reaches 0, and the roots can no longer
+// be derived forward from path[0]. The control keeps sn inside int32; the rest
+// push it past.
+const consistencyCases = [
+  ["consistency-2^31-control", 2 ** 31 - 4, 2 ** 31 - 2],
+  ["consistency-2^31-plus", 2 ** 31 + 2, 2 ** 31 + 4],
+  ["consistency-2^32-plus", 2 ** 32 + 2, 2 ** 32 + 4],
+  ["consistency-2^45", 2 ** 45 - 4, 2 ** 45 - 2],
+];
+
+for (const [name, m, n] of consistencyCases) {
+  let roots, path, depth;
+  try {
+    depth = consistencyDepth(m, n);
+    path = fixturePath(n, m, depth);
+    roots = refConsistencyRoots(m, n, path);
+  } catch (e) {
+    console.log(`FAIL  ${name}: fixture could not be built (${e.message})`);
+    bad++;
+    continue;
+  }
+  const created = 1700000000000;
+  const cpPayload = `1f916.checkpoint.v1:identity_events:${n}:${roots.newRoot}:${created}`;
+  const cpSig = b64u(edSign(null, Buffer.from(cpPayload, "utf8"), reg.privateKey));
+  const proofFile = join(dir, name + ".json");
+  writeFileSync(proofFile, JSON.stringify({
+    log: "identity_events",
+    from: { tree_size: m, root: roots.oldRoot },
+    to: { tree_size: n, root: roots.newRoot },
+    proof: path,
+  }));
+  const cpFile = join(dir, name + ".cp.json");
+  writeFileSync(cpFile, JSON.stringify({
+    registry_public_key: { x: regX },
+    checkpoints: [{ log: "identity_events", tree_size: n, root: roots.newRoot, sig: cpSig, created_at: created }],
+  }));
+  let outText = "";
+  try {
+    outText = execFileSync("node", ["verify.mjs", "--checkpoint", cpFile, "--consistency", proofFile, "--registry-key", regX], { encoding: "utf8" });
+  } catch (e) {
+    outText = (e.stdout ?? "") + (e.stderr ?? "");
+  }
+  const line = (outText.split("\n").find((l) => l.includes("consistency")) ?? "").trim();
+  const ok = line.startsWith("PASS");
+  console.log(`${ok ? "PASS" : "FAIL"}  ${name}: ${m} -> ${n} depth=${depth} -> ${line || "(no consistency line)"}`);
+  if (!ok) bad++;
+}
+
+// input-unusable (protocol issue #6). A file that is not a proof must produce
+// its OWN verdict and exit code, not `diverged`. Reporting "the log is
+// inconsistent" when the truth is "you handed me a 404 body" is a wrong claim
+// wearing a fixed crash's clothes, which is what SearlesBox objected to after
+// the first fix.
+const unusableFiles = [
+  ["unusable-error-envelope", JSON.stringify({ error: "no checkpoint at tree size 99999" })],
+  ["unusable-not-json", "not json at all"],
+  ["unusable-json-array", "[1,2,3]"],
+];
+for (const [name, body] of unusableFiles) {
+  const f = join(dir, name + ".json");
+  writeFileSync(f, body);
+  for (const mode of ["inclusion", "consistency"]) {
+    let outText = "", code = 0;
+    try {
+      outText = execFileSync("node", ["verify.mjs", "--checkpoint", join(dir, "cp.json"), `--${mode}`, f, "--registry-key", regX], { encoding: "utf8" });
+    } catch (e) {
+      outText = (e.stdout ?? "") + (e.stderr ?? "");
+      code = e.status ?? 0;
+    }
+    const verdict = (outText.match(/VERDICT: (\S+)/) ?? [])[1];
+    const ok = verdict === "input-unusable" && code === 4 && !outText.includes("TypeError");
+    console.log(`${ok ? "PASS" : "FAIL"}  ${name}-${mode}: expected input-unusable/exit 4, got ${verdict}/exit ${code}`);
+    if (!ok) bad++;
+  }
+}
+
+// A missing file is the same class and must not be a crash either.
+{
+  let outText = "", code = 0;
+  try {
+    outText = execFileSync("node", ["verify.mjs", "--checkpoint", join(dir, "cp.json"), "--inclusion", join(dir, "does-not-exist.json"), "--registry-key", regX], { encoding: "utf8" });
+  } catch (e) { outText = (e.stdout ?? "") + (e.stderr ?? ""); code = e.status ?? 0; }
+  const verdict = (outText.match(/VERDICT: (\S+)/) ?? [])[1];
+  const ok = verdict === "input-unusable" && code === 4;
+  console.log(`${ok ? "PASS" : "FAIL"}  unusable-missing-file: expected input-unusable/exit 4, got ${verdict}/exit ${code}`);
+  if (!ok) bad++;
+}
+
 process.exit(bad ? 1 : 0);

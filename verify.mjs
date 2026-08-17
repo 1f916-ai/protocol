@@ -336,10 +336,19 @@ if (args.witness && cp) {
 // a tree size that has no checkpoint and it answers 404 with {error: "..."},
 // which is valid JSON and parses fine. Reaching into it for `event.hash` threw
 // a TypeError with a stack trace and NO VERDICT line, so automation that
-// branches on the verdict string — the thing this file's own README teaches
-// people to grep for — got a crash instead of a controlled failure
-// (tcconnally, protocol issue #6). Parse and shape are checked before any
-// proof math runs, and a bad file FAILS like every other bad proof.
+// branches on the verdict string got a crash instead of a controlled failure.
+// Both reporters on protocol issue #6, tcconnally and SearlesBox, describe
+// automation that does exactly that. An earlier version of this comment said
+// the README teaches people to grep for the verdict; it does not, and the
+// claim was mine rather than the repository's. Parse and shape are checked
+// before any proof math runs, and a bad file yields VERDICT: input-unusable
+// with exit 4 rather than a stack trace or a false `diverged`.
+// Set when a file handed to --inclusion or --consistency is not a proof at all.
+// Deliberately NOT `failed`: see the verdict block for why "you gave me
+// something I cannot check" is a different answer from "I checked it and it
+// does not hold".
+let inputUnusable = false;
+
 function readProofFile(path, kind, required) {
   let raw;
   try {
@@ -386,8 +395,8 @@ if (args.inclusion) {
     "checkpoint.created_at",
   ]);
   if (read.bad) {
-    failed = true;
-    out.push(`FAIL  inclusion  ${read.bad} Keep the file: a refusal is evidence too.`);
+    inputUnusable = true;
+    out.push(`UNUSABLE  inclusion  ${read.bad}`);
   } else {
     const pr = read.proof;
     const ok = verifyInclusion(pr.event.hash, pr.event.leaf_index, pr.checkpoint.tree_size, pr.proof, pr.checkpoint.root);
@@ -413,8 +422,8 @@ if (args.consistency) {
     "to.root",
   ]);
   if (read.bad) {
-    failed = true;
-    out.push(`FAIL  consistency  ${read.bad} Keep the file: a refusal is evidence too.`);
+    inputUnusable = true;
+    out.push(`UNUSABLE  consistency  ${read.bad}`);
   } else {
     const pr = read.proof;
     const ok = verifyConsistency(pr.from.tree_size, pr.to.tree_size, pr.from.root, pr.to.root, pr.proof);
@@ -433,15 +442,25 @@ console.log("");
 // requested makes the verdict string and the exit code — the two things
 // people quote and branch on — byte-identical to a run that never asked.
 const witnessUnusable = witnessAskedAndEmpty && !witnessed && !failed;
+// input-unusable is the --inclusion/--consistency twin of witness-unusable, and
+// it exists for the reason SearlesBox gave on protocol issue #6: the first fix
+// stopped the crash and still answered `diverged`, which is the same string a
+// genuinely broken proof produces. That reports "this registry's log is
+// inconsistent" when the truth is "you handed me a 404 body". A guard that
+// turns a crash into a WRONG claim is one verdict short of a fix. It ranks
+// below a real failure, because if some other check actually diverged the
+// caller needs to hear that first.
 const verdict = failed
   ? "diverged"
-  : witnessed
-    ? "witnessed"
-    : witnessUnusable
-      ? "witness-unusable"
-      : anchored
-        ? "consistent-unwitnessed"
-        : "unanchored";
+  : inputUnusable
+    ? "input-unusable"
+    : witnessed
+      ? "witnessed"
+      : witnessUnusable
+        ? "witness-unusable"
+        : anchored
+          ? "consistent-unwitnessed"
+          : "unanchored";
 console.log(`VERDICT: ${verdict}`);
 if (verdict === "unanchored")
   console.log(
@@ -453,7 +472,11 @@ if (verdict === "witness-unusable")
   console.log(
     "You passed --witness and the file carried no line this run could apply, so no countersignature was checked. The record itself may be perfectly sound: this verdict is about the RUN, not about the record. Re-fetch the day file (use curl -sf, so a 404 body cannot land in it as if it were data) and try again. This is deliberately not reported as 'consistent-unwitnessed', because asking and receiving nothing is a different state from never asking, and only the first one means somebody should go look.",
   );
+if (verdict === "input-unusable")
+  console.log(
+    "A file you passed to --inclusion or --consistency is not a proof, so that check never ran. The commonest cause is saving an error response: ask the registry for a tree size it has no checkpoint for and it answers 404 with a JSON body that saves and parses perfectly. This is deliberately NOT reported as 'diverged', because 'I could not read your input' and 'the log is inconsistent' are opposite findings and only the second one is news about the registry. Re-fetch with curl -sf so an error body cannot land in the file as if it were data. Exit code 4.",
+  );
 if (verdict === "diverged") console.log("Keep every input file: a failing proof against a witnessed checkpoint is publishable evidence, not a bug report.");
 console.log("");
 console.log("This run does NOT prove: who holds any private key (custody labels are claims in the record), that any event's content is true, or anything about rows labeled legacy_unsealed.");
-process.exit(failed ? 1 : verdict === "witness-unusable" ? 3 : 0);
+process.exit(failed ? 1 : verdict === "input-unusable" ? 4 : verdict === "witness-unusable" ? 3 : 0);

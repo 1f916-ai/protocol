@@ -130,4 +130,117 @@ for (const [name, lines, expect, extra] of cases) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}: expected ${expect}, got ${verdict}`);
   if (!ok) bad++;
 }
+// ---------------------------------------------------------------------------
+// REGRESSION: Merkle halving above 2^32 (protocol issue #5).
+//
+// verify.mjs halves tree indices with `Math.floor(n / 2)`. The tempting
+// "optimization" is `n >> 1`, and it is correct for every tree this registry
+// has ever had. JavaScript's bitwise operators coerce to int32 first, so at
+// n >= 2^31 the shift returns a wrong (often negative) value and every proof
+// above that size silently mis-verifies. isSize() admits any safe integer, so
+// nothing else in the file stops a caller from reaching that range.
+//
+// The failure is invisible in normal operation: the identity log is five
+// leaves and would stay correct under the broken version for years. That is
+// exactly why it needs a permanent test rather than a comment.
+//
+// These cases build REAL RFC 6962 proofs at sizes above 2^32. The expected
+// roots are computed here by an independent implementation of the same
+// walk, so this file never asks verify.mjs to confirm its own arithmetic:
+// if the two disagree the case fails, whichever one is wrong.
+const sha = (b) => createHash("sha256").update(b).digest();
+// Matches verify.mjs:61 exactly: the leaf is hashed as its UTF-8 STRING, not
+// as decoded hex. Getting this wrong made all four fixtures fail against a
+// verifier that was right, which is the correct outcome for a test that
+// disagrees with the implementation and a good reminder that "the test went
+// red" is not the same as "the code is broken".
+const refLeaf = (leaf) => sha(Buffer.concat([Buffer.from([0x00]), Buffer.from(leaf, "utf8")]));
+const refNode = (l, r) => sha(Buffer.concat([Buffer.from([0x01]), l, r]));
+
+// RFC 6962 §2.1.1, written out with explicit division rather than a shift.
+function refInclusionRoot(leafHex, index, size, pathHex) {
+  let fn = index, sn = size - 1;
+  let r = refLeaf(leafHex);
+  for (const p of pathHex) {
+    const c = Buffer.from(p, "hex");
+    if (fn % 2 === 1 || fn === sn) {
+      r = refNode(c, r);
+      while (fn % 2 === 0 && fn !== 0) { fn = Math.floor(fn / 2); sn = Math.floor(sn / 2); }
+    } else {
+      r = refNode(r, c);
+    }
+    fn = Math.floor(fn / 2); sn = Math.floor(sn / 2);
+  }
+  if (sn !== 0) throw new Error("fixture is not a well-formed proof: path too short for size");
+  return r.toString("hex");
+}
+
+// A path long enough to reach the root from `index` in a tree of `size`.
+// Deterministic so a failure is reproducible: hash the position, never random.
+const fixturePath = (size, index, depth) =>
+  Array.from({ length: depth }, (_, i) => sha(Buffer.from(`1f916-regtest:${size}:${index}:${i}`)).toString("hex"));
+
+// Depth is how many halvings it takes for sn to reach 0, which is what the
+// loop above consumes. Computed rather than guessed so the fixtures stay
+// well-formed if the sizes below are edited.
+function depthFor(size) {
+  let sn = size - 1, d = 0;
+  while (sn !== 0) { sn = Math.floor(sn / 2); d++; }
+  return d;
+}
+
+// The boundary is on sn = size - 1, not on size, and that distinction is the
+// difference between a test that bites and one that only looks like it does.
+// A first draft used 2^31-1 and 2^31, both of which give sn <= 2^31-1, fit in
+// an int32, and PASSED under the very mutant they were written to catch.
+// size = 2^31 + 1 is the smallest size whose sn does not fit.
+const bigSizes = [
+  ["halving-2^31-control", 2 ** 31],       // sn = 2^31-1: the largest a shift still gets right
+  ["halving-2^31-plus-1", 2 ** 31 + 1],    // sn = 2^31:   the first size a shift gets wrong
+  ["halving-2^32-plus-1", 2 ** 32 + 1],
+  ["halving-2^45", 2 ** 45],
+];
+
+for (const [name, size] of bigSizes) {
+  const index = Math.floor(size / 3);
+  const depth = depthFor(size);
+  const path = fixturePath(size, index, depth);
+  const leafHex = sha(Buffer.from(`1f916-regtest-leaf:${size}`)).toString("hex");
+  let expectRoot;
+  try {
+    expectRoot = refInclusionRoot(leafHex, index, size, path);
+  } catch (e) {
+    console.log(`FAIL  ${name}: fixture could not be built (${e.message})`);
+    bad++;
+    continue;
+  }
+  const created = 1700000000000;
+  const cpPayload = `1f916.checkpoint.v1:identity_events:${size}:${expectRoot}:${created}`;
+  const cpSig = b64u(edSign(null, Buffer.from(cpPayload, "utf8"), reg.privateKey));
+  const proofFile = join(dir, name + ".json");
+  writeFileSync(proofFile, JSON.stringify({
+    log: "identity_events",
+    event: { id: index, hash: leafHex, leaf_index: index },
+    proof: path,
+    checkpoint: { tree_size: size, root: expectRoot, sig: cpSig, created_at: created },
+  }));
+  const cpFile = join(dir, name + ".cp.json");
+  writeFileSync(cpFile, JSON.stringify({
+    registry_public_key: { x: regX },
+    checkpoints: [{ log: "identity_events", tree_size: size, root: expectRoot, sig: cpSig, created_at: created }],
+  }));
+  let outText = "";
+  try {
+    outText = execFileSync("node", ["verify.mjs", "--checkpoint", cpFile, "--inclusion", proofFile, "--registry-key", regX], { encoding: "utf8" });
+  } catch (e) {
+    outText = (e.stdout ?? "") + (e.stderr ?? "");
+  }
+  // The inclusion line must say PASS. A shift-based half() makes it FAIL,
+  // which is the whole point; a crash makes the line absent, which also fails.
+  const line = (outText.split("\n").find((l) => l.includes("inclusion")) ?? "").trim();
+  const ok = line.startsWith("PASS");
+  console.log(`${ok ? "PASS" : "FAIL"}  ${name}: size=${size} depth=${depth} -> ${line || "(no inclusion line)"}`);
+  if (!ok) bad++;
+}
+
 process.exit(bad ? 1 : 0);

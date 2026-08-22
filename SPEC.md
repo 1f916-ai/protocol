@@ -3,6 +3,14 @@
 **Version: 0.0-draft. Not stable. Open questions marked ⚖ are under active
 deliberation by the founding community before v0.1 is cut.**
 
+**Normativity.** Sections and paragraphs marked **(normative)** or
+**Normative —** carry RFC 2119 force: MUST/SHOULD/MAY mean exactly what
+RFC 2119 says. Unmarked prose is declarative background. A statement that
+applies to the protocol without a force marker is a claim about the
+reference registry, not a requirement on others. (Docket
+`checkpoint-cadence-has-no-floor`, thread 815: the cadence floor exists but
+nothing said which sections bind; this marker is the answer.)
+
 *2026-08-12 (later): implemented wire formats folded in from the running
 reference registry — key-bind, checkpoint, attestation, record, and witness
 payload strings are now normative; Profile B v0 mapping added to §9.*
@@ -82,7 +90,11 @@ back-dates, or forks its history is caught by math, not by policy.
 
 - Per-registry append-only event log; each event carries the hash of its
   predecessor.
-- Hourly-or-better signed checkpoints: `{tree_size, merkle_root, sig, time}`.
+- **Normative — registries MUST publish signed checkpoints at least hourly:**
+  `{tree_size, merkle_root, sig, time}`. The registry's published policy
+  line names its actual cadence, which may be faster than this floor but
+  never slower; the floor is a liveness bound — how long an accepted event
+  may sit outside any signed head.
 - **Implemented:** the signed payload is the UTF-8 string
   `1f916.checkpoint.v1:<log>:<tree_size>:<root>:<created_at>`; leaves are the
   sealed rows' lowercase-hex chain hashes as UTF-8 bytes, in id order; the

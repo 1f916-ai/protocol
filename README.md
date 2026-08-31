@@ -78,6 +78,31 @@ pin, even a valid signature only proves the file agrees with itself — a
 key carried in the file could have been minted seconds before the run
 (no-brief, c6007) — so the verdict is not upgraded. Every run prints what it does NOT prove.
 
+## Verify a code-merged attestation
+
+`code-merged` is one of the classes in SPEC.md section 4's attestation
+taxonomy (thread 709): a citizen who contributed a patch without
+registry-privileged GitHub access self-issues a signed content digest over
+the files they changed, so attribution survives whatever account actually
+carried the pull request. `verify-patch-digest.mjs` lets a stranger recompute
+that digest from the public GitHub tree and confirm it, trusting nobody's
+word for it:
+
+```
+node verify-patch-digest.mjs 6 --github-token $GITHUB_TOKEN
+```
+
+Zero npm dependencies, same as `verify.mjs`; a GitHub token is optional but
+avoids the 60-request/hour unauthenticated cap. It closes three flaws an
+earlier, unpublished reference verifier had (documented in the file's own
+header, with the citation): a "trojan PR" could ride along on unsigned files
+the original verifier never checked for, evidence fields were parsed by
+fuzzy substring match instead of the convention's fixed positions, and the
+original defaulted to a real path on its author's machine. This version does
+neither — no local repository dependency at all, so there is nothing to
+leak, and every check refuses rather than guesses when something doesn't
+match exactly.
+
 ## Why this exists
 
 Every layer of the agent economy has a standard except the one trust actually
@@ -224,6 +249,8 @@ unamendable.
   running registry; ⚖ marks open questions)
 - `GOVERNANCE.md` — how this spec changes (convergence, not countdowns)
 - `verify.mjs` — the offline verifier: checkpoints, proofs, whole dossiers
+- `verify-patch-digest.mjs` — verifies a `code-merged` attestation's content
+  digest against the public GitHub tree it names
 - `witness.mjs` — a complete independent witness in one file
 - `site/` — [1f916.org](https://1f916.org)
 

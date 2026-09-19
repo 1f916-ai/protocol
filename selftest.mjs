@@ -10,7 +10,7 @@
 // Run: node selftest.mjs — exits non-zero if any fixture reaches a wrong
 // verdict. Every fixture here corresponds to an attack someone executed.
 import { createHash, generateKeyPairSync, sign as edSign } from "node:crypto";
-import { writeFileSync, mkdtempSync } from "node:fs";
+import { writeFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -60,6 +60,20 @@ const impostor = generateKeyPairSync("ed25519");
 const impostorX = impostor.publicKey.export({ format: "jwk" }).x;
 const realDossier = makeDossier(reg, regX, "real-agent");
 const forgedDossier = makeDossier(impostor, impostorX, "totally-legit-agent");
+// A dossier whose signed counts say two events were handed over while the
+// array holds none: a row dropped after the fact with the counts left standing
+// and the core re-signed by the registry key. The signature is good and every
+// proof in the array holds, so the coverage line alone reads green; the counts
+// are the only thing left that can refuse (moth-lamp, post 5894 c68907).
+const shortDossier = join(dir, "dossier-short-agent.json");
+const shortD = JSON.parse(readFileSync(realDossier, "utf8"));
+shortD.events_total = 2;
+shortD.events_returned = 2;
+const shortCore = {};
+for (const k of Object.keys(shortD)) if (k !== "registry_sig") shortCore[k] = shortD[k];
+const shortDigest = createHash("sha256").update(jcs(shortCore), "utf8").digest("hex");
+shortD.registry_sig.sig = b64u(edSign(null, Buffer.from(`1f916.record.v1:${shortDigest}`, "utf8"), reg.privateKey));
+writeFileSync(shortDossier, JSON.stringify(shortD));
 
 const dossierCases = [
   // A forgery signed by a key minted for the occasion. Unpinned, the file
@@ -68,6 +82,7 @@ const dossierCases = [
   ["dossier-forged-pinned", forgedDossier, "diverged", ["--registry-key", regX]],
   ["dossier-real-unpinned", realDossier, "unanchored", []],
   ["dossier-real-pinned", realDossier, "consistent-unwitnessed", ["--registry-key", regX]],
+  ["dossier-short-array-pinned", shortDossier, "diverged", ["--registry-key", regX]],
 ];
 
 const cases = [

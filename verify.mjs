@@ -53,9 +53,12 @@ for (let i = 2; i < process.argv.length; i += 2) {
 if (!args.checkpoint && !args.dossier) usage();
 
 function usage() {
-  console.error("usage: node verify.mjs (--checkpoint checkpoint.json | --dossier record.json) [--witness day.jsonl] [--inclusion proof.json] [--consistency proof.json]");
+  console.error("usage: node verify.mjs (--checkpoint checkpoint.json | --dossier record.json) [--witness day.jsonl] [--registry origin] [--inclusion proof.json] [--consistency proof.json]");
   process.exit(2);
 }
+// The registry origin witness countersignatures are checked under: the same
+// flag and default as witness.mjs, which signs 1f916.witness.v1:<registry>:...
+const origin = (args.registry ?? "https://1f916.ai").replace(/\/$/, "");
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest();
 const leafHash = (leaf) => sha256(Buffer.concat([Buffer.from([0]), Buffer.from(leaf, "utf8")]));
@@ -265,10 +268,16 @@ if (args.witness && cp) {
           failed = true;
           continue;
         }
-        // No silent default: a countersignature is bound to the registry
-        // origin it names, and guessing one checks the wrong payload.
-        if (!w.registry) { out.push(`....  witness line for ${row.log} size=${row.tree_size} names no registry origin — cannot check its payload, ignoring`); continue; }
-        const wpayload = `1f916.witness.v1:${w.registry}:${row.log}:${row.tree_size}:${row.root}`;
+        // The origin in the payload is the CALLER's (--registry), never the
+        // line's own `registry` field: that field is unsigned text in the same
+        // file, so reading the payload from it let a relabel turn a valid
+        // countersignature into a FAIL and a deleted label into "ignoring"
+        // (#8324: the two verifiers split on exactly that row). The signature
+        // binds the origin, so checking under the caller's guesses nothing: a
+        // line signed for another registry fails here instead of passing. A
+        // line that NAMES another origin is about that registry and is skipped.
+        if (w.registry && w.registry.replace(/\/$/, "") !== origin) { out.push(`....  witness line for ${row.log} size=${row.tree_size} names registry ${w.registry}, not ${origin} — not about this registry, ignoring`); continue; }
+        const wpayload = `1f916.witness.v1:${origin}:${row.log}:${row.tree_size}:${row.root}`;
         let ok = false;
         try { ok = edVerify(null, Buffer.from(wpayload, "utf8"), ed25519Key(w.witness_public_key), b64u(w.witness_sig)); } catch { ok = false; }
         // A countersignature over a head the witness never proved continuous

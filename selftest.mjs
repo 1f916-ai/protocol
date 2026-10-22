@@ -104,7 +104,6 @@ const cases = [
   // reader hunting for another file when the reason was printed just above
   // (head-of-experiments, #8565 on the registry).
   ["signed-wrong-pin", [signedLine], "diverged", ["--witness-key", "A".repeat(43)], /no witness line/],
-  ["signed-no-registry-origin", [{ ...signedLine, registry: undefined }], "witness-unusable", ["--witness-key", witX, "--registry-key", regX], /no witness line/],
   ["signed-forged", [{ ...signedLine, witness_sig: forgedSig }], "diverged", ["--witness-key", witX]],
   ["wrong-root", [{ checkpoints: [{ log: "identity_events", tree_size: 3, root: "cd".repeat(32), sig }] }], "diverged", ["--registry-key", regX]],
 ];

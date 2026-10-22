@@ -247,9 +247,26 @@ if (args.witness && cp) {
     else if (line.log && line.tree_size !== undefined) flat.push(line);
   }
   for (const row of cp.checkpoints ?? []) {
-    let signedOk = false, unsignedMatch = false, mismatch = false, refused = null, unproven = false;
+    let signedOk = false, unsignedMatch = false, mismatch = false, refused = null, unproven = false, unavailable = null;
     for (const w of flat) {
       if (w.log !== row.log || w.tree_size !== row.tree_size) continue;
+      // A witness that could not OBTAIN a consistency proof (the fetch threw,
+      // or the registry answered an error page) measured nothing about this
+      // head. witness.mjs writes that case under a refused-* status because
+      // it refuses to sign what it did not check — correct for the witness,
+      // wrong for a reader: one socket error on a day file turned every head
+      // of that size into `diverged`, beside hundreds of countersignatures of
+      // the same root (witness/2026-09-14.jsonl, the only such line in the
+      // published files). Older witnesses wrote it as
+      // refused-consistency-failure with "unavailable (...)" in consistency;
+      // newer ones as refused-consistency-unavailable. Both are no evidence
+      // either way. refused-consistency-withheld is NOT this case: a proof
+      // from the pinned head unserved for hours is the only move a rewriting
+      // registry has, so it stays a refusal below.
+      if (w.status === "refused-consistency-unavailable" || (w.status === "refused-consistency-failure" && typeof w.consistency === "string" && w.consistency.startsWith("unavailable ("))) {
+        unavailable = w.consistency ?? w.status;
+        continue;
+      }
       // A REFUSAL is the loudest thing a witness can say. These lines carry
       // log/tree_size/root and no signature, so they used to fall through to
       // the unsigned branch and get reported as CORROBORATION — the exact
@@ -309,6 +326,12 @@ if (args.witness && cp) {
     else if (unproven) out.push(`....  ${row.log} size=${row.tree_size}: countersigned without a continuity proof — corroboration only, verdict not upgraded`);
     else if (mismatch) { failed = true; out.push(`FAIL  witness copy DISAGREES — keep both files, this is evidence  ${row.log} size=${row.tree_size}`); }
     else if (unsignedMatch) out.push(`....  unsigned witness copy matches ${row.log} size=${row.tree_size} — corroboration only; offline, this run cannot prove who wrote that file, so the verdict is not upgraded`);
+    else if (unavailable) {
+      // The only line for this head is one where the witness never got a
+      // proof: the file was supplied and holds nothing that bears on it.
+      witnessAskedAndEmpty = true;
+      out.push(`....  the only witness line for ${row.log} size=${row.tree_size} says the witness could not obtain a consistency proof (${unavailable}) — no evidence for or against this head; try another day's file`);
+    }
     else {
       // "try a later file" was true and useless: it did not say WHY, and a
       // reader reasonably concluded the file was the wrong format. Checkpoints

@@ -52,7 +52,7 @@
 // --registry-key,
 // the pinned key must be one of the keys in the chain. A run that reached a
 // key NEWER than the pinned one only by following rotation statements
-// reports a verdict ending -followed (exit 5, or 3 for witness-unusable-
+// reports a verdict ending -followed (exit 7, or 3 for witness-unusable-
 // followed), never the plain verdict: a statement the old key signed is only that key holder's word. The
 // history is read from --key-history if given, else from the first input
 // file that carries one (the registry serves it beside every head). A file
@@ -775,5 +775,5 @@ if (verdict === "diverged") console.log("Keep every input file: a failing proof 
 console.log("");
 console.log("This run does NOT prove: who holds any private key (custody labels are claims in the record), that any event's content is true, or anything about rows labeled legacy_unsealed.");
 process.exit(
-  failed ? 1 : verdict === "input-unusable" ? 4 : verdict.startsWith("witness-unusable") ? 3 : verdict === "retired-signer" ? 6 : verdict.endsWith("-followed") ? 5 : 0,
+  failed ? 1 : verdict === "input-unusable" ? 4 : verdict.startsWith("witness-unusable") ? 3 : verdict === "retired-signer" ? 6 : verdict.endsWith("-followed") ? 7 : 0,
 );

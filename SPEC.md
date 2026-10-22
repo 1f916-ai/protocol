@@ -429,7 +429,7 @@ A conformant verifier (normative):
   the pinned one, reachable only by following rotation statements, MUST NOT
   report the same verdict as a run anchored by a direct pin, whatever the
   witness grade: the reference verifier appends `-followed` to the verdict
-  (`consistent-unwitnessed-followed` and `witnessed-followed` exit 5,
+  (`consistent-unwitnessed-followed` and `witnessed-followed` exit 7,
   `witness-unusable-followed` exits 3). A witness vouches for a log's heads,
   not for which key is the registry's.
 - MUST NOT report a dossier signed by a retired epoch as anchored. With a

@@ -517,7 +517,7 @@ for (const [name, body] of unusableFiles) {
     // fails under the new key. This is why the history exists.
     ["rotation-key-only-view", ["--checkpoint", write("rot-key-only.json", { registry_public_key: { x: regBX }, checkpoints: [finalHead] }), "--registry-key", regBX], "diverged"],
   ];
-  const EXIT = { "witness-unusable-followed": 3, "consistent-unwitnessed": 0, "consistent-unwitnessed-followed": 5, "witnessed-followed": 5, "retired-signer": 6, unanchored: 0, diverged: 1 };
+  const EXIT = { "witness-unusable-followed": 3, "consistent-unwitnessed": 0, "consistent-unwitnessed-followed": 7, "witnessed-followed": 7, "retired-signer": 6, unanchored: 0, diverged: 1 };
   for (const [name, argv, expect] of rotationCases) {
     let outText = "", code = 0;
     try {

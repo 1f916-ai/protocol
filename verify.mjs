@@ -761,7 +761,7 @@ if (verdict === "retired-signer")
   );
 if (verdict.endsWith("-followed"))
   console.log(
-    "The checks hold, and the key you pinned is in the registry's key history, but some signatures were made by a NEWER key that this run reached only by following rotation statements. Each statement is signed by both keys, so it proves the holder of your pinned key agreed to the change; it cannot prove that holder was the registry and not someone who stole the key. Deliberately its own verdict, and exit code 5 (3 when the witness file was unusable): pin the current key, cross-checked against the project site, to remove the dependence on the old one.",
+    "The checks hold, and the key you pinned is in the registry's key history, but some signatures were made by a NEWER key that this run reached only by following rotation statements. Each statement is signed by both keys, so it proves the holder of your pinned key agreed to the change; it cannot prove that holder was the registry and not someone who stole the key. Deliberately its own verdict, and exit code 7 (3 when the witness file was unusable): pin the current key, cross-checked against the project site, to remove the dependence on the old one.",
   );
 if (verdict === "witness-unusable")
   console.log(

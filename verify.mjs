@@ -412,14 +412,32 @@ if (args.inclusion) {
 }
 
 // 4. Consistency proof.
+// A fold proves that two ROOTS are prefix-consistent, and anyone can build two
+// roots that fold: hash any leaves, take a prefix. So the fold alone said
+// nothing about the registry, yet it printed "PASS ... append-only between
+// checkpoints" for roots no key had signed. The served response carries the
+// registry's signature over each end (sig, created_at), the same bytes the
+// inclusion check above already verifies; this checks both, so a PASS means
+// the REGISTRY signed two heads and they fold.
+// Then the ends are compared with the checkpoints under test. A fold between
+// two signed heads the record does not contain is true and beside the point:
+// it says the log appended between those sizes, nothing about the record's
+// head (erma, c118992 on post 9648), so the run says so instead of letting the
+// PASS line read as continuity for this record. An end at the same log and
+// size as a record checkpoint but with a different root means the registry
+// signed two trees for one size, which cannot both be true: that is evidence.
 if (args.consistency) {
   const read = readProofFile(args.consistency, "a consistency proof", [
     "log",
     "proof",
     "from.tree_size",
     "from.root",
+    "from.sig",
+    "from.created_at",
     "to.tree_size",
     "to.root",
+    "to.sig",
+    "to.created_at",
   ]);
   if (read.bad) {
     inputUnusable = true;
@@ -427,8 +445,32 @@ if (args.consistency) {
   } else {
     const pr = read.proof;
     const ok = verifyConsistency(pr.from.tree_size, pr.to.tree_size, pr.from.root, pr.to.root, pr.proof);
-    out.push(`${ok ? "PASS" : "FAIL"}  consistency  ${pr.log} ${pr.from.tree_size} -> ${pr.to.tree_size} (append-only between checkpoints)`);
-    if (!ok) failed = true;
+    const endSigOk = (end) => {
+      try {
+        return edVerify(null, Buffer.from(`1f916.checkpoint.v1:${pr.log}:${end.tree_size}:${end.root}:${end.created_at}`, "utf8"), key, b64u(end.sig));
+      } catch {
+        return false;
+      }
+    };
+    const fromSig = endSigOk(pr.from), toSig = endSigOk(pr.to);
+    if (!fromSig) out.push(`FAIL  consistency  ${pr.log} from size=${pr.from.tree_size}: registry signature does not verify — this end is not a head the registry signed`);
+    if (!toSig) out.push(`FAIL  consistency  ${pr.log} to size=${pr.to.tree_size}: registry signature does not verify — this end is not a head the registry signed`);
+    out.push(`${ok && fromSig && toSig ? "PASS" : "FAIL"}  consistency  ${pr.log} ${pr.from.tree_size} -> ${pr.to.tree_size} (append-only between checkpoints)`);
+    if (!(ok && fromSig && toSig)) failed = true;
+    const inRecord = (cp?.checkpoints ?? []).filter((c) => c.log === pr.log);
+    let touches = false;
+    for (const end of [pr.from, pr.to]) {
+      for (const c of inRecord) {
+        if (c.tree_size !== end.tree_size) continue;
+        if (c.root === end.root) touches = true;
+        else {
+          failed = true;
+          out.push(`FAIL  consistency  ${pr.log} size=${end.tree_size}: the proof's root ${String(end.root).slice(0, 12)}… differs from the record's ${String(c.root).slice(0, 12)}… at the same size — two trees for one size; keep both files, this is evidence`);
+        }
+      }
+    }
+    if (!touches && inRecord.length)
+      out.push(`....  consistency proof touches no checkpoint in the record under test (${pr.log} sizes ${inRecord.map((c) => c.tree_size).join(", ")}): it shows the log appended between ${pr.from.tree_size} and ${pr.to.tree_size}, and nothing about this record's head. Ask for a proof that ends at the record's size.`);
   }
 }
 

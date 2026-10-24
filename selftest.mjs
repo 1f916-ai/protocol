@@ -289,6 +289,13 @@ function consistencyDepth(m, n) {
 // pre-loop strips every one of them, fn reaches 0, and the roots can no longer
 // be derived forward from path[0]. The control keeps sn inside int32; the rest
 // push it past.
+// One end of a consistency proof as the registry serves it: size, root, and
+// the registry's checkpoint signature over them.
+function signedEnd(signer, size, rootHex, createdAt) {
+  const p = `1f916.checkpoint.v1:identity_events:${size}:${rootHex}:${createdAt}`;
+  return { tree_size: size, root: rootHex, sig: b64u(edSign(null, Buffer.from(p, "utf8"), signer.privateKey)), created_at: createdAt };
+}
+
 const consistencyCases = [
   ["consistency-2^31-control", 2 ** 31 - 4, 2 ** 31 - 2],
   ["consistency-2^31-plus", 2 ** 31 + 2, 2 ** 31 + 4],
@@ -311,10 +318,13 @@ for (const [name, m, n] of consistencyCases) {
   const cpPayload = `1f916.checkpoint.v1:identity_events:${n}:${roots.newRoot}:${created}`;
   const cpSig = b64u(edSign(null, Buffer.from(cpPayload, "utf8"), reg.privateKey));
   const proofFile = join(dir, name + ".json");
+  // Both ends carry the registry's signature, as the served
+  // /api/checkpoint/consistency response does; verify.mjs refuses ends no
+  // key signed.
   writeFileSync(proofFile, JSON.stringify({
     log: "identity_events",
-    from: { tree_size: m, root: roots.oldRoot },
-    to: { tree_size: n, root: roots.newRoot },
+    from: signedEnd(reg, m, roots.oldRoot, created),
+    to: signedEnd(reg, n, roots.newRoot, created),
     proof: path,
   }));
   const cpFile = join(dir, name + ".cp.json");
@@ -332,6 +342,48 @@ for (const [name, m, n] of consistencyCases) {
   const ok = line.startsWith("PASS");
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}: ${m} -> ${n} depth=${depth} -> ${line || "(no consistency line)"}`);
   if (!ok) bad++;
+}
+
+// A fold is checkable by anyone and forgeable by anyone: hash some leaves, take
+// a prefix, and the two roots fold. These fixtures keep one honest fold (the
+// control sizes above) and change only what binds it: who signed the ends,
+// and whether an end is the record's head.
+{
+  const m = 2 ** 31 - 4, n = 2 ** 31 - 2, created = 1700000000000;
+  const path = fixturePath(n, m, consistencyDepth(m, n));
+  const roots = refConsistencyRoots(m, n, path);
+  const otherRoot = "cd".repeat(32);
+  const cpAt = (size, rootHex) => ({
+    registry_public_key: { x: regX },
+    checkpoints: [{ ...signedEnd(reg, size, rootHex, created), log: "identity_events" }],
+  });
+  const cases = [
+    // Ends signed by a key that is not the registry's: the fold holds, the
+    // heads are nobody's. Must not pass.
+    ["consistency-ends-not-registry-signed", cpAt(n, roots.newRoot), signedEnd(impostor, m, roots.oldRoot, created), signedEnd(impostor, n, roots.newRoot, created), "diverged", null],
+    // Honest signed fold, but the record's head is a different size: the proof
+    // is true and says nothing about this record, and the run must say so.
+    ["consistency-off-record", cpAt(n + 7, otherRoot), signedEnd(reg, m, roots.oldRoot, created), signedEnd(reg, n, roots.newRoot, created), "consistent-unwitnessed", "touches no checkpoint"],
+    // The record holds a different root at the proof's `to` size: the registry
+    // signed two trees for one size.
+    ["consistency-two-roots-one-size", cpAt(n, otherRoot), signedEnd(reg, m, roots.oldRoot, created), signedEnd(reg, n, roots.newRoot, created), "diverged", "two trees for one size"],
+  ];
+  for (const [name, cpObj, from, to, want, mustSay] of cases) {
+    const cpFile = join(dir, name + ".cp.json");
+    const proofFile = join(dir, name + ".json");
+    writeFileSync(cpFile, JSON.stringify(cpObj));
+    writeFileSync(proofFile, JSON.stringify({ log: "identity_events", from, to, proof: path }));
+    let outText = "";
+    try {
+      outText = execFileSync("node", ["verify.mjs", "--checkpoint", cpFile, "--consistency", proofFile, "--registry-key", regX], { encoding: "utf8" });
+    } catch (e) {
+      outText = (e.stdout ?? "") + (e.stderr ?? "");
+    }
+    const verdict = (outText.match(/VERDICT: (\S+)/) ?? [])[1];
+    const ok = verdict === want && (!mustSay || outText.includes(mustSay));
+    console.log(`${ok ? "PASS" : "FAIL"}  ${name}: expected ${want}${mustSay ? ` saying "${mustSay}"` : ""}, got ${verdict}`);
+    if (!ok) bad++;
+  }
 }
 
 // input-unusable (protocol issue #6). A file that is not a proof must produce

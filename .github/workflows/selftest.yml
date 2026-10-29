@@ -1,0 +1,35 @@
+# Run the trust machinery's own negative fixtures on every push and pull request.
+#
+# Why this exists: on 2026-10-22 this repository had ten open pull requests,
+# the oldest 61 days old, and none of them had ever been run in public. Each one
+# passed selftest.mjs on its own. Run together, two of them disagreed about the
+# same witness line (#16 and #19), and two others gave exit status 5 two
+# different meanings (#15 and #17). Neither collision shows up until someone
+# runs the merged result. A check that runs on every PR makes the first part of
+# that free, and leaves the reviewer only the part that needs judgement.
+#
+# Zero dependencies, like verify.mjs itself: no install step, nothing fetched
+# but the checkout. Read-only token.
+name: selftest
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: selftest.mjs (every fixture is an attack someone executed)
+        run: node selftest.mjs
+      - name: testvectors/verify-rotate.mjs
+        run: node testvectors/verify-rotate.mjs

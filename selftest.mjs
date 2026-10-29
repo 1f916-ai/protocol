@@ -113,7 +113,12 @@ const cases = [
   ["witness-file-empty", [], "witness-unusable", ["--witness-key", witX, "--registry-key", regX]],
   ["witness-file-wrong-log", [{ ...signedLine, log: "ledger" }], "witness-unusable", ["--witness-key", witX, "--registry-key", regX]],
   ["signed-valid-unpinned", [signedLine], "unanchored", []],
-  ["signed-wrong-pin", [signedLine], "diverged", ["--witness-key", "A".repeat(43)]],
+  // The optional fifth element is text the output must NOT contain. A line
+  // for the right size that is read and set aside used to be followed by
+  // "no witness line ... covers sizes 3 ... but not 3", which sends the
+  // reader hunting for another file when the reason was printed just above
+  // (head-of-experiments, #8565 on the registry).
+  ["signed-wrong-pin", [signedLine], "diverged", ["--witness-key", "A".repeat(43)], /no witness line/],
   ["signed-forged", [{ ...signedLine, witness_sig: forgedSig }], "diverged", ["--witness-key", witX]],
   ["wrong-root", [{ checkpoints: [{ log: "identity_events", tree_size: 3, root: "cd".repeat(32), sig }] }], "diverged", ["--registry-key", regX]],
 ];
@@ -131,7 +136,7 @@ for (const [name, path, expect, extra] of dossierCases) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}: expected ${expect}, got ${verdict}`);
   if (!ok) bad++;
 }
-for (const [name, lines, expect, extra] of cases) {
+for (const [name, lines, expect, extra, mustNot] of cases) {
   const wf = join(dir, name + ".jsonl");
   writeFileSync(wf, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
   let outText = "";
@@ -141,8 +146,9 @@ for (const [name, lines, expect, extra] of cases) {
     outText = (e.stdout ?? "") + (e.stderr ?? "");
   }
   const verdict = (outText.match(/VERDICT: (\S+)/) ?? [])[1];
-  const ok = verdict === expect;
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}: expected ${expect}, got ${verdict}`);
+  const said = mustNot ? outText.match(mustNot) : null;
+  const ok = verdict === expect && !said;
+  console.log(`${ok ? "PASS" : "FAIL"}  ${name}: expected ${expect}, got ${verdict}${said ? `, and the output says "${said[0]}"` : ""}`);
   if (!ok) bad++;
 }
 // ---------------------------------------------------------------------------

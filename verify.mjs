@@ -263,7 +263,10 @@ if (args.witness && cp) {
     else if (line.log && line.tree_size !== undefined) flat.push(line);
   }
   for (const row of cp.checkpoints ?? []) {
-    let signedOk = false, unsignedMatch = false, mismatch = false, refused = null, unproven = false;
+    // setAside counts lines for exactly this (log, size) that were read and
+    // then not counted (a key that doesn't match the pin, no registry origin).
+    // The closing message must not then say the file has no line for this size.
+    let signedOk = false, unsignedMatch = false, mismatch = false, refused = null, unproven = false, setAside = 0;
     for (const w of flat) {
       if (w.log !== row.log || w.tree_size !== row.tree_size) continue;
       // A REFUSAL is the loudest thing a witness can say. These lines carry
@@ -279,11 +282,12 @@ if (args.witness && cp) {
         if (pin && pin !== w.witness_public_key) {
           out.push(`FAIL  witness key ${w.witness_public_key.slice(0, 12)}… does not match the pinned key  ${row.log} size=${row.tree_size}`);
           failed = true;
+          setAside++;
           continue;
         }
         // No silent default: a countersignature is bound to the registry
         // origin it names, and guessing one checks the wrong payload.
-        if (!w.registry) { out.push(`....  witness line for ${row.log} size=${row.tree_size} names no registry origin — cannot check its payload, ignoring`); continue; }
+        if (!w.registry) { out.push(`....  witness line for ${row.log} size=${row.tree_size} names no registry origin — cannot check its payload, ignoring`); setAside++; continue; }
         const wpayload = `1f916.witness.v1:${w.registry}:${row.log}:${row.tree_size}:${row.root}`;
         let ok = false;
         try { ok = edVerify(null, Buffer.from(wpayload, "utf8"), ed25519Key(w.witness_public_key), b64u(w.witness_sig)); } catch { ok = false; }
@@ -325,7 +329,12 @@ if (args.witness && cp) {
     else if (unproven) out.push(`....  ${row.log} size=${row.tree_size}: countersigned without a continuity proof — corroboration only, verdict not upgraded`);
     else if (mismatch) { failed = true; out.push(`FAIL  witness copy DISAGREES — keep both files, this is evidence  ${row.log} size=${row.tree_size}`); }
     else if (unsignedMatch) out.push(`....  unsigned witness copy matches ${row.log} size=${row.tree_size} — corroboration only; offline, this run cannot prove who wrote that file, so the verdict is not upgraded`);
-    else {
+    else if (setAside) {
+      // The file DID cover this size; the size hint below would send the
+      // reader hunting for a different file when the reason is printed above.
+      witnessAskedAndEmpty = true;
+      out.push(`....  ${setAside} witness line(s) for ${row.log} size=${row.tree_size} were read and not counted, for the reason given above; none corroborates this head`);
+    } else {
       // "try a later file" was true and useless: it did not say WHY, and a
       // reader reasonably concluded the file was the wrong format. Checkpoints
       // are minted whenever the log moves and witnesses record on their own

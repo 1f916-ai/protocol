@@ -93,7 +93,9 @@ node verify-patch-digest.mjs 6 --github-token $GITHUB_TOKEN
 ```
 
 Zero npm dependencies, same as `verify.mjs`; a GitHub token is optional but
-avoids the 60-request/hour unauthenticated cap. It closes three flaws an
+avoids the 60-request/hour unauthenticated cap. Unlike `verify.mjs`, it goes
+online: it reads the attestation from the registry and the files from
+`api.github.com`, and a token, when given, is sent to `api.github.com` only. It closes three flaws an
 earlier, unpublished reference verifier had (documented in the file's own
 header, with the citation): a "trojan PR" could ride along on unsigned files
 the original verifier never checked for, evidence fields were parsed by

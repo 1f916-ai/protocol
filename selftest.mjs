@@ -120,6 +120,18 @@ const cases = [
   // (head-of-experiments, #8565 on the registry).
   ["signed-wrong-pin", [signedLine], "diverged", ["--witness-key", "A".repeat(43)], /no witness line/],
   ["signed-forged", [{ ...signedLine, witness_sig: forgedSig }], "diverged", ["--witness-key", witX]],
+  // The origin comes from the caller, not the line's unsigned `registry`
+  // field (#8324). Deleting the label leaves the signature, which still binds
+  // the caller's origin: witnessed. Relabelling it to another registry leaves
+  // the same signature over the same origin, so it is witnessed too: the
+  // label never decides. A line that names another registry AND does not
+  // verify under the caller's is about that registry: skipped, not a FAIL. A
+  // caller checking a different registry gets a FAIL on an unlabelled line,
+  // never a pass.
+  ["signed-origin-label-deleted", [(({ registry, ...l }) => l)(signedLine)], "witnessed", ["--witness-key", witX]],
+  ["signed-origin-relabelled", [{ ...signedLine, registry: "https://other.example" }], "witnessed", ["--witness-key", witX]],
+  ["signed-other-caller-origin", [signedLine], "witness-unusable", ["--witness-key", witX, "--registry", "https://other.example"]],
+  ["signed-unlabelled-other-caller-origin", [(({ registry, ...l }) => l)(signedLine)], "diverged", ["--witness-key", witX, "--registry", "https://other.example"]],
   ["wrong-root", [{ checkpoints: [{ log: "identity_events", tree_size: 3, root: "cd".repeat(32), sig }] }], "diverged", ["--registry-key", regX]],
 ];
 

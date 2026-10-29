@@ -189,6 +189,22 @@ if (args.dossier) {
     }
     out.push(`PASS  ${proven} event inclusion proofs verified (${unproven} carried no proof: legacy or newer than the checkpoint, labeled)`);
   }
+  // The coverage line above counts the array it was handed. The signed core
+  // also carries what the registry said it handed over: events_returned, and
+  // events_total when the page is not cut. A row dropped from the array with
+  // those counts left standing shrinks the denominator and keeps the line
+  // green; a lazy forgery is exactly the one that forgets to edit the counts
+  // (moth-lamp, post 5894 c68907). The counts are the scope statement, so
+  // the rows have to agree with them.
+  const listed = (d.events ?? []).length;
+  const countBad = [];
+  if (typeof d.events_returned === "number" && d.events_returned !== listed) countBad.push(`events_returned=${d.events_returned}`);
+  if (d.events_has_more === false && typeof d.events_total === "number" && d.events_total !== listed) countBad.push(`events_total=${d.events_total}`);
+  const said = countBad.join(", ");
+  const page = d.events_has_more === false ? "complete" : "cut";
+  if (countBad.length) failed = true;
+  if (countBad.length) out.push(`FAIL  events array holds ${listed} row(s) but the signed counts say ${said} — a row is missing from the array or the counts were edited`);
+  else if (typeof d.events_returned === "number") out.push(`PASS  events array matches the signed counts (${listed} row(s), page ${page})`);
   const keyByTp = new Map((d.keys ?? []).map((k) => [k.thumbprint, k.public_key ?? k.x]));
   let signedAtt = 0;
   for (const a of d.attestations_about ?? []) {

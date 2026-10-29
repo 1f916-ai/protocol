@@ -6,6 +6,8 @@
 //                   [--inclusion proof.json] [--consistency proof.json]
 //                   [--registry-key <b64url>] [--witness-key <b64url>]
 //   node verify.mjs --dossier record.json --registry-key <b64url>
+//   node verify.mjs --witness day.jsonl --peer other.jsonl --registry-key <b64url>
+//                   [--witness-from <url>] [--peer-from <url>]
 //
 // THE ANCHOR RULE. Every signature in these files is checked against a key.
 // If that key comes FROM THE SAME FILE, a verifying signature proves only
@@ -50,10 +52,13 @@ for (let i = 2; i < process.argv.length; i += 2) {
   if (!process.argv[i].startsWith("--") || process.argv[i + 1] === undefined) usage();
   args[process.argv[i].slice(2)] = process.argv[i + 1];
 }
-if (!args.checkpoint && !args.dossier) usage();
+// --peer compares two day files with each other, so it can run with no
+// checkpoint at all; it needs --witness as its other side.
+if (args.peer && !args.witness) usage();
+if (!args.checkpoint && !args.dossier && !args.peer) usage();
 
 function usage() {
-  console.error("usage: node verify.mjs (--checkpoint checkpoint.json | --dossier record.json) [--witness day.jsonl] [--registry origin] [--inclusion proof.json] [--consistency proof.json]");
+  console.error("usage: node verify.mjs (--checkpoint checkpoint.json | --dossier record.json | --witness day.jsonl --peer other.jsonl) [--witness day.jsonl] [--registry origin] [--inclusion proof.json] [--consistency proof.json] [--witness-from <url>] [--peer-from <url>]");
   process.exit(2);
 }
 // The registry origin witness countersignatures are checked under: the same
@@ -371,6 +376,160 @@ if (args.witness && cp) {
   }
 }
 
+// 2b. Peer comparison (--peer). The protocol's one defence against a
+// registry that serves different callers different histories (a split view)
+// is that it is "detectable by any two parties comparing witnessed heads".
+// Nothing here did the comparing: --witness matches one day file against
+// this run's own checkpoint, and witness.mjs compares the registry against
+// its own last head, so each is one custody looking at itself. --peer reads
+// a second day file and, for every (log, tree_size) the two files name,
+// requires one root. Still offline: the caller fetches both files and says
+// where each came from.
+//
+// The outcomes stay apart, because each is a different fact:
+//   split-view           two roots for one (log, tree_size), EACH under a
+//                        registry checkpoint signature that verifies against
+//                        the PINNED registry key. A route can drop or
+//                        withhold a signed statement but cannot forge one, so
+//                        this holds whoever carried either file. It is the
+//                        registry contradicting itself: VERDICT diverged, exit 1.
+//   peer-unattributable  roots disagree, but some side is not registry-signed
+//                        under the pinned key (an unsigned head line, a bad
+//                        signature, or no --registry-key at all). Anyone can
+//                        write such a line, so it proves nothing either way.
+//   peer-incomparable    no disagreement, and no (log, tree_size) carries a
+//                        signed head in BOTH files. Zero overlap is not
+//                        agreement, and must not print as a match.
+//   no-split-seen        every shared signed head agrees, and at least one
+//                        file came by a route the registry's operator does not
+//                        custody.
+//   no-split-seen-single-custody  the same match, but both files came by
+//                        routes the operator custodies (or undeclared ones),
+//                        so one hand may have served both seats.
+// The two unresolved outcomes exit 5: a comparison that could not complete
+// shares an exit code with neither a pass nor a split.
+//
+// Routes are the caller's declaration (--witness-from, --peer-from). An
+// undeclared or unparsable route counts as custodied, so a missing flag can
+// only make the claim smaller. Custodied means the registry's own host, or
+// the 1f916-ai GitHub organisation, whose witness workflow signs with a key
+// held in that organisation's repository secrets.
+//
+// Not covered, and printed on every peer run: key rotations (day files carry
+// no rotation statements, so a successor key served split is outside this
+// check), and heads at DIFFERENT sizes (two roots that never share a size
+// need a consistency proof between them, which day files do not carry).
+const REGISTRY_ORG = "1f916-ai";
+function custodiedRoute(u) {
+  if (!u) return true;
+  let url;
+  try { url = new URL(u); } catch { return true; }
+  const host = url.hostname.toLowerCase();
+  if (host === "1f916.ai" || host.endsWith(".1f916.ai")) return true;
+  if (host === `${REGISTRY_ORG}.github.io`) return true;
+  if (host === "github.com" || host === "raw.githubusercontent.com" || host === "api.github.com") {
+    const segs = url.pathname.split("/").filter(Boolean).map((s) => s.toLowerCase());
+    // api.github.com paths are /repos/<owner>/...; the other two start at the owner.
+    const owner = host === "api.github.com" ? segs[1] : segs[0];
+    return owner === REGISTRY_ORG;
+  }
+  return false;
+}
+
+// Every registry-signed head a day file states: the checkpoints[] copied on
+// the founding format's lines, and the registry_sig carried on each
+// witness.mjs countersignature line. Returns null if the file is unreadable.
+function dayFileHeads(path) {
+  let raw;
+  try { raw = readFileSync(path, "utf8"); } catch { return null; }
+  const heads = [];
+  for (const l of raw.split("\n").filter(Boolean)) {
+    let line;
+    try { line = JSON.parse(l); } catch { continue; }
+    if (line === null || typeof line !== "object") continue;
+    if (Array.isArray(line.checkpoints)) {
+      for (const c of line.checkpoints) heads.push({ log: c.log, tree_size: c.tree_size, root: c.root, created_at: c.created_at, sig: c.sig });
+    } else if (line.log && line.tree_size !== undefined && line.root) {
+      heads.push({ log: line.log, tree_size: line.tree_size, root: line.root, created_at: line.created_at, sig: line.registry_sig });
+    }
+  }
+  return heads;
+}
+
+let peerVerdict = null;
+let inputUnusablePeer = false;
+if (args.peer) {
+  const sides = { witness: dayFileHeads(args.witness), peer: dayFileHeads(args.peer) };
+  const unreadable = Object.entries(sides).filter(([, h]) => h === null).map(([s]) => args[s]);
+  if (unreadable.length) {
+    inputUnusablePeer = true;
+    out.push(`UNUSABLE  peer  ${unreadable.join(", ")} could not be read`);
+  } else {
+    // Only the pinned key makes a head "signed": a key carried in the files
+    // themselves lets anyone fabricate a peer file that shows a split.
+    const regKey = regPin ? ed25519Key(regPin) : null;
+    const isSigned = (h) => {
+      if (!regKey || typeof h.sig !== "string" || h.created_at === undefined) return false;
+      if (!isSize(h.tree_size) || !isHex64(h.root) || typeof h.log !== "string") return false;
+      try {
+        return edVerify(null, Buffer.from(`1f916.checkpoint.v1:${h.log}:${h.tree_size}:${h.root}:${h.created_at}`, "utf8"), regKey, b64u(h.sig));
+      } catch { return false; }
+    };
+    const byHead = new Map();
+    for (const [side, heads] of Object.entries(sides)) {
+      for (const h of heads) {
+        const k = `${h.log}\u0000${h.tree_size}`;
+        if (!byHead.has(k)) byHead.set(k, { log: h.log, tree_size: h.tree_size, rows: [] });
+        byHead.get(k).rows.push({ side, root: h.root, created_at: h.created_at, signed: isSigned(h) });
+      }
+    }
+    let splits = 0, unattributable = 0, sharedSigned = 0;
+    for (const { log, tree_size, rows } of byHead.values()) {
+      const roots = new Set(rows.map((r) => r.root));
+      const signedRoots = new Set(rows.filter((r) => r.signed).map((r) => r.root));
+      if (signedRoots.size > 1) {
+        // A split can sit inside ONE file too (the registry signed two roots
+        // for one size and a witness saw both): it is the same contradiction.
+        splits++;
+        failed = true;
+        const seen = [...signedRoots].map((root) => `${root.slice(0, 16)}… in ${[...new Set(rows.filter((r) => r.signed && r.root === root).map((r) => r.side))].join("+")} file`);
+        out.push(`FAIL  SPLIT VIEW  ${log} size=${tree_size}: the registry signed ${signedRoots.size} roots (${seen.join("; ")}), each signature verifying under the pinned key — keep both files, this is publishable evidence`);
+      } else if (roots.size > 1) {
+        unattributable++;
+        out.push(`....  roots DISAGREE for ${log} size=${tree_size}, but not every side is registry-signed under the pinned key — anyone can write an unsigned line, so this attributes nothing to the registry`);
+      } else if (rows.some((r) => r.signed && r.side === "witness") && rows.some((r) => r.signed && r.side === "peer")) {
+        sharedSigned++;
+      }
+    }
+    // A declared route is the caller's word, and this run never fetches it.
+    // Printing each file's SHA-256 beside its route makes the word checkable:
+    // anyone can fetch the declared URL and compare. That holds exactly when
+    // the URL names fixed bytes (a raw.githubusercontent.com URL with a commit
+    // sha in place of a branch); a day file at a branch URL keeps growing, so
+    // a later fetch differs whether or not the declaration was true.
+    const fileSha = (p) => { try { return sha256(readFileSync(p)).toString("hex"); } catch { return "unreadable"; } };
+    const routes = `witness file (sha256 ${fileSha(args.witness)}) from ${args["witness-from"] ?? "an undeclared route"}${custodiedRoute(args["witness-from"]) ? " [registry-custodied]" : ""}, peer file (sha256 ${fileSha(args.peer)}) from ${args["peer-from"] ?? "an undeclared route"}${custodiedRoute(args["peer-from"]) ? " [registry-custodied]" : ""}`;
+    peerVerdict = splits
+      ? "split-view"
+      : unattributable
+        ? "peer-unattributable"
+        : sharedSigned === 0
+          ? "peer-incomparable"
+          : custodiedRoute(args["witness-from"]) && custodiedRoute(args["peer-from"])
+            ? "no-split-seen-single-custody"
+            : "no-split-seen";
+    const why = {
+      "split-view": `${splits} head(s) carry two registry-signed roots`,
+      "peer-unattributable": `${unattributable} head(s) disagree without a registry signature on every side`,
+      "peer-incomparable": regKey ? "no (log, tree_size) has a signed head in both files, so nothing was compared" : "no --registry-key was given, so no head counts as signed and nothing can be compared",
+      "no-split-seen-single-custody": `${sharedSigned} shared signed head(s) agree, but both files came by routes the registry's operator custodies, so one hand may have served both`,
+      "no-split-seen": `${sharedSigned} shared signed head(s) agree`,
+    }[peerVerdict];
+    out.push(`PEER  ${peerVerdict}  ${why}; ${routes}`);
+    out.push("....  peer check covers heads at the SAME (log, tree_size) only. Not compared: key rotations (day files carry no rotation statements) and roots at different sizes (no consistency proof between them).");
+  }
+}
+
 // A file handed to --inclusion or --consistency may not be a proof at all.
 // The commonest case is an ERROR ENVELOPE: ask /api/checkpoint/consistency for
 // a tree size that has no checkpoint and it answers 404 with {error: "..."},
@@ -482,6 +641,12 @@ console.log("");
 // requested makes the verdict string and the exit code — the two things
 // people quote and branch on — byte-identical to a run that never asked.
 const witnessUnusable = witnessAskedAndEmpty && !witnessed && !failed;
+if (inputUnusablePeer) inputUnusable = true;
+// A peer-only run (no checkpoint, no dossier) checked nothing but the
+// comparison, so the comparison's outcome is its verdict; "unanchored" would
+// describe a checkpoint that was never passed.
+const peerOnly = args.peer && !args.checkpoint && !args.dossier;
+const peerUnresolved = peerVerdict === "peer-unattributable" || peerVerdict === "peer-incomparable";
 // input-unusable is the --inclusion/--consistency twin of witness-unusable, and
 // it exists for the reason SearlesBox gave on protocol issue #6: the first fix
 // stopped the crash and still answered `diverged`, which is the same string a
@@ -494,6 +659,8 @@ const verdict = failed
   ? "diverged"
   : inputUnusable
     ? "input-unusable"
+    : peerOnly
+      ? peerVerdict
     : witnessed
       ? "witnessed"
       : witnessUnusable
@@ -517,6 +684,14 @@ if (verdict === "input-unusable")
     "A file you passed to --inclusion or --consistency is not a proof, so that check never ran. The commonest cause is saving an error response: ask the registry for a tree size it has no checkpoint for and it answers 404 with a JSON body that saves and parses perfectly. This is deliberately NOT reported as 'diverged', because 'I could not read your input' and 'the log is inconsistent' are opposite findings and only the second one is news about the registry. Re-fetch with curl -sf so an error body cannot land in the file as if it were data. Exit code 4.",
   );
 if (verdict === "diverged") console.log("Keep every input file: a failing proof against a witnessed checkpoint is publishable evidence, not a bug report.");
+if (peerVerdict === "peer-unattributable" || peerVerdict === "peer-incomparable")
+  console.log(
+    `The peer comparison could not complete (${peerVerdict}), so it says nothing for or against a split view. Exit code 5, shared with neither a pass nor a split. Pin the registry key with --registry-key, and compare day files that cover the same hours.`,
+  );
+if (peerVerdict === "no-split-seen-single-custody")
+  console.log(
+    "Both day files reached you by routes the registry's operator custodies, so a registry serving different histories could have served both of them the same one. Fetch one side from a witness or mirror outside that custody and pass its URL as --peer-from.",
+  );
 console.log("");
 console.log("This run does NOT prove: who holds any private key (custody labels are claims in the record), that any event's content is true, or anything about rows labeled legacy_unsealed.");
-process.exit(failed ? 1 : verdict === "input-unusable" ? 4 : verdict === "witness-unusable" ? 3 : 0);
+process.exit(failed ? 1 : verdict === "input-unusable" ? 4 : verdict === "witness-unusable" ? 3 : peerUnresolved ? 5 : 0);

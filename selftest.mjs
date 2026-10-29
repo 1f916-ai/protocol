@@ -599,4 +599,80 @@ for (const [name, body] of unusableFiles) {
   }
 }
 
+// --peer: two day files compared with each other (split view). The defence
+// SPEC and the IETF draft name is "any two parties comparing witnessed heads";
+// these fixtures pin what each comparison outcome must print and exit with.
+// A split is called only when BOTH roots carry a registry signature that
+// verifies under the PINNED key: an impostor's signature, or no pin at all,
+// lets anyone fabricate a peer file that "shows" a split.
+const otherRoot = "cd".repeat(32);
+const regSign = (signer, log, size, r, at) => b64u(edSign(null, Buffer.from(`1f916.checkpoint.v1:${log}:${size}:${r}:${at}`, "utf8"), signer.privateKey));
+const dayLine = (signer, size, r) => ({ checkpoints: [{ log: "identity_events", tree_size: size, root: r, sig: regSign(signer, "identity_events", size, r, created), created_at: created }] });
+// The witness.mjs countersignature format carries the registry's signature as registry_sig.
+const counterLine = (signer, size, r) => ({ type: "witness-countersignature", registry: "https://1f916.ai", log: "identity_events", tree_size: size, root: r, created_at: created, registry_sig: regSign(signer, "identity_events", size, r, created), status: "countersigned" });
+const pin = ["--registry-key", regX];
+const peerCases = [
+  // name, witness-file lines, peer-file lines, extra args, verdict, exit code
+  ["peer-split-signed", [dayLine(reg, 3, root)], [dayLine(reg, 3, otherRoot)], pin, "diverged", 1],
+  ["peer-split-countersignature-format", [dayLine(reg, 3, root)], [counterLine(reg, 3, otherRoot)], pin, "diverged", 1],
+  // Two signed roots inside ONE file are the same contradiction.
+  ["peer-split-inside-one-file", [dayLine(reg, 3, root), dayLine(reg, 3, otherRoot)], [dayLine(reg, 3, root)], pin, "diverged", 1],
+  ["peer-split-impostor-signed", [dayLine(reg, 3, root)], [dayLine(impostor, 3, otherRoot)], pin, "peer-unattributable", 5],
+  ["peer-split-unsigned-line", [dayLine(reg, 3, root)], [{ checkpoints: [{ log: "identity_events", tree_size: 3, root: otherRoot }] }], pin, "peer-unattributable", 5],
+  ["peer-split-unpinned", [dayLine(reg, 3, root)], [dayLine(reg, 3, otherRoot)], [], "peer-unattributable", 5],
+  // No shared size: zero overlap must not print as agreement.
+  ["peer-no-overlap", [dayLine(reg, 3, root)], [dayLine(reg, 4, otherRoot)], pin, "peer-incomparable", 5],
+  ["peer-match-unpinned", [dayLine(reg, 3, root)], [dayLine(reg, 3, root)], [], "peer-incomparable", 5],
+  // A match over routes the registry's operator custodies, or undeclared ones, is not the top verdict.
+  ["peer-match-undeclared-routes", [dayLine(reg, 3, root)], [dayLine(reg, 3, root)], pin, "no-split-seen-single-custody", 0],
+  ["peer-match-custodied-routes", [dayLine(reg, 3, root)], [dayLine(reg, 3, root)], [...pin, "--witness-from", "https://raw.githubusercontent.com/1f916-ai/1f916/main/witness/x.jsonl", "--peer-from", "https://1f916.ai/witness/x.jsonl"], "no-split-seen-single-custody", 0],
+  ["peer-match-independent-route", [dayLine(reg, 3, root)], [dayLine(reg, 3, root)], [...pin, "--peer-from", "https://witness.example.org/day.jsonl"], "no-split-seen", 0],
+];
+for (const [name, wLines, pLines, extra, expect, expectCode] of peerCases) {
+  const wf = join(dir, name + ".witness.jsonl");
+  const pf = join(dir, name + ".peer.jsonl");
+  writeFileSync(wf, wLines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  writeFileSync(pf, pLines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  let outText = "", code = 0;
+  try {
+    outText = execFileSync("node", ["verify.mjs", "--witness", wf, "--peer", pf, ...extra], { encoding: "utf8" });
+  } catch (e) { outText = (e.stdout ?? "") + (e.stderr ?? ""); code = e.status ?? 0; }
+  const verdict = (outText.match(/VERDICT: (\S+)/) ?? [])[1];
+  // A route is only the caller's declaration; the printed SHA-256 of each
+  // file is what lets a stranger refetch the declared URL and check it.
+  const fileShas = [wf, pf].map((f) => createHash("sha256").update(readFileSync(f)).digest("hex"));
+  const shasShown = fileShas.every((h) => outText.includes(`sha256 ${h}`));
+  const ok = verdict === expect && code === expectCode && shasShown;
+  console.log(`${ok ? "PASS" : "FAIL"}  ${name}: expected ${expect}/exit ${expectCode}, got ${verdict}/exit ${code}${shasShown ? "" : ", and the files' sha256 are not both printed"}`);
+  if (!ok) bad++;
+}
+// A peer file that cannot be read is input-unusable, never a comparison result.
+{
+  const wf = join(dir, "peer-missing.witness.jsonl");
+  writeFileSync(wf, JSON.stringify(dayLine(reg, 3, root)) + "\n");
+  let outText = "", code = 0;
+  try {
+    outText = execFileSync("node", ["verify.mjs", "--witness", wf, "--peer", join(dir, "no-such-peer.jsonl"), ...pin], { encoding: "utf8" });
+  } catch (e) { outText = (e.stdout ?? "") + (e.stderr ?? ""); code = e.status ?? 0; }
+  const verdict = (outText.match(/VERDICT: (\S+)/) ?? [])[1];
+  const ok = verdict === "input-unusable" && code === 4;
+  console.log(`${ok ? "PASS" : "FAIL"}  peer-missing-file: expected input-unusable/exit 4, got ${verdict}/exit ${code}`);
+  if (!ok) bad++;
+}
+// With a checkpoint run, a split between the day files still fails the run.
+{
+  const wf = join(dir, "peer-with-cp.witness.jsonl");
+  const pf = join(dir, "peer-with-cp.peer.jsonl");
+  writeFileSync(wf, JSON.stringify(dayLine(reg, 3, root)) + "\n");
+  writeFileSync(pf, JSON.stringify(dayLine(reg, 3, otherRoot)) + "\n");
+  let outText = "", code = 0;
+  try {
+    outText = execFileSync("node", ["verify.mjs", "--checkpoint", join(dir, "cp.json"), "--witness", wf, "--peer", pf, ...pin], { encoding: "utf8" });
+  } catch (e) { outText = (e.stdout ?? "") + (e.stderr ?? ""); code = e.status ?? 0; }
+  const verdict = (outText.match(/VERDICT: (\S+)/) ?? [])[1];
+  const ok = verdict === "diverged" && code === 1 && outText.includes("SPLIT VIEW");
+  console.log(`${ok ? "PASS" : "FAIL"}  peer-split-with-checkpoint: expected diverged/exit 1 with a SPLIT VIEW line, got ${verdict}/exit ${code}`);
+  if (!ok) bad++;
+}
+
 process.exit(bad ? 1 : 0);

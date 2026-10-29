@@ -41,6 +41,14 @@ const signedLine = { registry: "https://1f916.ai", log: "identity_events", tree_
 const firstObsLine = { ...signedLine, consistency: "first observation" };
 // A witness that REFUSED this head. Its meaning is the opposite of support.
 const refusalLine = { registry: "https://1f916.ai", log: "identity_events", tree_size: 3, root, status: "refused-consistency-failure", consistency: "FAILED — possible rewrite, evidence, keep this line" };
+// A witness that could not GET a proof (socket error, registry error page).
+// It measured nothing; the first shape is what witnesses wrote before the
+// status was split (the live one is witness/2026-09-14.jsonl), the second is
+// what they write after it. Neither may outvote a countersignature.
+const unavailableLegacyLine = { ...refusalLine, consistency: "unavailable (TypeError: fetch failed)" };
+const unavailableLine = { ...refusalLine, status: "refused-consistency-unavailable", consistency: "unavailable (HTTP 503)" };
+// Past the witness's withholding threshold the same silence is a refusal.
+const withheldLine = { ...refusalLine, status: "refused-consistency-withheld", consistency: "unavailable for 7 h (8 attempts, last HTTP 503) — a proof from 2 the registry has not served; unproven, evidence, keep this line" };
 
 // --- the anchor axis: a dossier is only as good as the key that checked it
 function jcs(v) {
@@ -104,6 +112,12 @@ const cases = [
   // A refusal alongside a good countersignature still fails: the loudest
   // statement wins, and it must not be silently outvoted.
   ["refusal-beside-countersignature", [signedLine, refusalLine], "diverged", ["--witness-key", witX, "--registry-key", regX]],
+  // A proof the witness never obtained is not a refusal of the head: beside a
+  // countersignature it changes nothing, and alone it is an unusable file.
+  ["unavailable-legacy-beside-countersignature", [signedLine, unavailableLegacyLine], "witnessed", ["--witness-key", witX, "--registry-key", regX]],
+  ["unavailable-beside-countersignature", [signedLine, unavailableLine], "witnessed", ["--witness-key", witX, "--registry-key", regX]],
+  ["unavailable-alone", [unavailableLine], "witness-unusable", ["--witness-key", witX, "--registry-key", regX]],
+  ["withheld-beside-countersignature", [signedLine, withheldLine], "diverged", ["--witness-key", witX, "--registry-key", regX]],
   // A witness file supplied that yields nothing applicable is NOT the same as
   // supplying no witness at all. Both used to print consistent-unwitnessed and
   // exit 0, so a citizen who ran the documented command during the daily

@@ -274,9 +274,26 @@ if (args.witness && cp) {
     // setAside counts lines for exactly this (log, size) that were read and
     // then not counted (a key that doesn't match the pin, no registry origin).
     // The closing message must not then say the file has no line for this size.
-    let signedOk = false, unsignedMatch = false, mismatch = false, refused = null, unproven = false, setAside = 0;
+    let signedOk = false, unsignedMatch = false, mismatch = false, refused = null, unproven = false, setAside = 0, unavailable = null;
     for (const w of flat) {
       if (w.log !== row.log || w.tree_size !== row.tree_size) continue;
+      // A witness that could not OBTAIN a consistency proof (the fetch threw,
+      // or the registry answered an error page) measured nothing about this
+      // head. witness.mjs writes that case under a refused-* status because
+      // it refuses to sign what it did not check — correct for the witness,
+      // wrong for a reader: one socket error on a day file turned every head
+      // of that size into `diverged`, beside hundreds of countersignatures of
+      // the same root (witness/2026-09-14.jsonl, the only such line in the
+      // published files). Older witnesses wrote it as
+      // refused-consistency-failure with "unavailable (...)" in consistency;
+      // newer ones as refused-consistency-unavailable. Both are no evidence
+      // either way. refused-consistency-withheld is NOT this case: a proof
+      // from the pinned head unserved for hours is the only move a rewriting
+      // registry has, so it stays a refusal below.
+      if (w.status === "refused-consistency-unavailable" || (w.status === "refused-consistency-failure" && typeof w.consistency === "string" && w.consistency.startsWith("unavailable ("))) {
+        unavailable = w.consistency ?? w.status;
+        continue;
+      }
       // A REFUSAL is the loudest thing a witness can say. These lines carry
       // log/tree_size/root and no signature, so they used to fall through to
       // the unsigned branch and get reported as CORROBORATION — the exact
@@ -354,7 +371,14 @@ if (args.witness && cp) {
       // reader hunting for a different file when the reason is printed above.
       witnessAskedAndEmpty = true;
       out.push(`....  ${setAside} witness line(s) for ${row.log} size=${row.tree_size} were read and not counted, for the reason given above; none corroborates this head`);
-    } else {
+    }
+    else if (unavailable) {
+      // The only line for this head is one where the witness never got a
+      // proof: the file was supplied and holds nothing that bears on it.
+      witnessAskedAndEmpty = true;
+      out.push(`....  the only witness line for ${row.log} size=${row.tree_size} says the witness could not obtain a consistency proof (${unavailable}) — no evidence for or against this head; try another day's file`);
+    }
+    else {
       // "try a later file" was true and useless: it did not say WHY, and a
       // reader reasonably concluded the file was the wrong format. Checkpoints
       // are minted whenever the log moves and witnesses record on their own

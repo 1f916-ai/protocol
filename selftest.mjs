@@ -9,8 +9,9 @@
 //             (open-chair c5917, no-brief c6007)
 // Run: node selftest.mjs — exits non-zero if any fixture reaches a wrong
 // verdict. Every fixture here corresponds to an attack someone executed.
-import { createHash, generateKeyPairSync, sign as edSign } from "node:crypto";
-import { writeFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { createHash, createPublicKey, generateKeyPairSync, sign as edSign } from "node:crypto";
+import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -461,6 +462,141 @@ for (const [name, body] of unusableFiles) {
   const ok = verdict === "input-unusable" && code === 4;
   console.log(`${ok ? "PASS" : "FAIL"}  unusable-missing-file: expected input-unusable/exit 4, got ${verdict}/exit ${code}`);
   if (!ok) bad++;
+}
+
+// ---------------------------------------------------------------------------
+// EVERY LEAF OF EVERY SMALL TREE (registry posts #8476 and #8555).
+//
+// A citizen's inclusion check stayed green for weeks with its sibling order
+// inverted on one branch, because the registry's served proofs only ever
+// handed it leaves whose path never takes that branch. Each fold bug has a
+// "blind set" of (index, size) pairs that verify correctly anyway, and the
+// blind sets of plausible one-token mutants are all different: inverting the
+// left-sibling case passes only leaf 0 of each tree, inverting the
+// right-sibling case passes only the last leaf, flipping the ascent guard
+// passes 1,825 of 2,080. No sampled subset of leaves is safe, so the test
+// is exhaustive over trees of size 1..64, which costs well under a second.
+//
+// The fixtures above check the fold against a second copy of the same fold,
+// which catches arithmetic bugs (the int32 halving) but not a misreading both
+// copies share. Here the expected roots come from a different definition:
+// the RFC 6962 §2.1 MTH recursion over real leaves, the proofs from the
+// PATH (§2.1.1) and SUBPROOF (§2.1.2) recursions. None of that code walks
+// fn/sn the way the verifier does. The MTH here reproduces the roots of the
+// 8-leaf Certificate Transparency test tree (transparency-dev/merkle,
+// testonly/constants.go), so it is anchored to other implementations too.
+//
+// verify.mjs is a CLI and 8,000 process starts would take minutes, so its
+// Merkle section is loaded from the file's own text: everything from the
+// `const sha256` line up to the JCS section, run in a fresh context. That is
+// the shipped code, not a copy. If either marker moves, the test fails
+// loudly instead of quietly testing nothing.
+{
+  const src = readFileSync(new URL("./verify.mjs", import.meta.url), "utf8");
+  const start = src.indexOf("const sha256 =");
+  const end = src.indexOf("// JCS for the value shapes");
+  const ctx = { Buffer, createHash, createPublicKey };
+  let verifyInclusion, verifyConsistency;
+  if (start < 0 || end < start) {
+    console.log("FAIL  small-trees: could not locate the Merkle section of verify.mjs");
+    bad++;
+  } else {
+    runInNewContext(src.slice(start, end) + "\nglobalThis.vi = verifyInclusion; globalThis.vc = verifyConsistency;", ctx);
+    verifyInclusion = ctx.vi;
+    verifyConsistency = ctx.vc;
+  }
+
+  const split = (n) => { let k = 1; while (k * 2 < n) k *= 2; return k; };
+  const mth = (d) => d.length === 1 ? d[0] : refNode(mth(d.slice(0, split(d.length))), mth(d.slice(split(d.length))));
+  const auditPath = (m, d) => {
+    if (d.length === 1) return [];
+    const k = split(d.length);
+    return m < k ? [...auditPath(m, d.slice(0, k)), mth(d.slice(k))] : [...auditPath(m - k, d.slice(k)), mth(d.slice(0, k))];
+  };
+  const subproof = (m, d, b) => {
+    if (m === d.length) return b ? [] : [mth(d)];
+    const k = split(d.length);
+    return m <= k ? [...subproof(m, d.slice(0, k), b), mth(d.slice(k))] : [...subproof(m - k, d.slice(k), false), mth(d.slice(0, k))];
+  };
+  const hex = (bufs) => bufs.map((b) => b.toString("hex"));
+  // A proof with its last node replaced must never verify: catches a fold
+  // that ignores part of its input.
+  const tamper = (p) => [...p.slice(0, -1), sha(Buffer.from("1f916-tamper:" + p.join(""))).toString("hex")];
+
+  // The anchor: the CT test tree's roots for sizes 1..8.
+  const ctLeaves = ["", "00", "10", "2021", "3031", "40414243", "5051525354555657", "606162636465666768696a6b6c6d6e6f"]
+    .map((h) => sha(Buffer.concat([Buffer.from([0x00]), Buffer.from(h, "hex")])));
+  const ctRoots = [
+    "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+    "fac54203e7cc696cf0dfcb42c92a1d9dbaf70ad9e621f4bd8d98662f00e3c125",
+    "aeb6bcfe274b70a14fb067a5e5578264db0fa9b51af5e0ba159158f329e06e77",
+    "d37ee418976dd95753c1c73862b9398fa2a2cf9b4ff0fdfe8b30cd95209614b7",
+    "4e3bbb1f7b478dcfe71fb631631519a3bca12c9aefca1612bfce4c13a86264d4",
+    "76e67dadbcdf1e10e1b74ddc608abd2f98dfb16fbce75277b5232a127f2087ef",
+    "ddb89be403809e325750d3d263cd78929c2942b7942a34b77e122c9594a74c8c",
+    "5dc9da79a70659a9ad559cb701ded9a2ab9d823aad2f4960cfe370eff4604328",
+  ];
+  const ctBad = ctRoots.filter((r, i) => mth(ctLeaves.slice(0, i + 1)).toString("hex") !== r).length;
+  console.log(`${ctBad ? "FAIL" : "PASS"}  small-trees-reference: MTH matches ${8 - ctBad} of 8 CT test-tree roots`);
+  if (ctBad) bad++;
+
+  if (verifyInclusion) {
+    let incOk = 0, incTamperOk = 0, incTampered = 0, conOk = 0, conTamperOk = 0, conTampered = 0, zeroOk = 0, wrongOldOk = 0;
+    const firstFail = [];
+    for (let n = 1; n <= 64; n++) {
+      const leaves = Array.from({ length: n }, (_, i) => `1f916-small-tree:${n}:${i}`);
+      const d = leaves.map(refLeaf);
+      const roots = [null];
+      for (let m = 1; m <= n; m++) roots.push(mth(d.slice(0, m)).toString("hex"));
+      const root = roots[n];
+      for (let i = 0; i < n; i++) {
+        const p = hex(auditPath(i, d));
+        if (verifyInclusion(leaves[i], i, n, p, root)) incOk++;
+        else if (firstFail.length < 5) firstFail.push(`inclusion(${i},${n})`);
+        if (p.length) {
+          incTampered++;
+          if (!verifyInclusion(leaves[i], i, n, tamper(p), root)) incTamperOk++;
+          else if (firstFail.length < 5) firstFail.push(`inclusion-tampered(${i},${n})`);
+        }
+      }
+      for (let m = 1; m <= n; m++) {
+        const p = hex(subproof(m, d, true));
+        if (verifyConsistency(m, n, roots[m], root, p)) conOk++;
+        else if (firstFail.length < 5) firstFail.push(`consistency(${m},${n})`);
+        if (m < n) {
+          conTampered++;
+          if (!verifyConsistency(m, n, roots[m], root, tamper(p))) conTamperOk++;
+          else if (firstFail.length < 5) firstFail.push(`consistency-tampered(${m},${n})`);
+        }
+        // The honest proof with a forged old root must never verify. The
+        // tampered-proof check above leaves the old root alone, so it cannot
+        // see a verifier that stops comparing it; at m = n the proof is empty
+        // and the old-root comparison is the whole check, so this is the only
+        // case here that reaches that line with anything at stake.
+        const forgedOld = sha(Buffer.from(`1f916-forged-old:${m}:${n}`)).toString("hex");
+        if (!verifyConsistency(m, n, forgedOld, root, p)) wrongOldOk++;
+        else if (firstFail.length < 5) firstFail.push(`consistency-wrong-old-root(${m},${n})`);
+      }
+      // From the empty tree the RFC's proof is empty, so a non-empty one must
+      // be refused. A fold that starts from fn = m - 1 = -1 never terminates
+      // here; this line returning at all is part of the check.
+      if (!verifyConsistency(0, n, root, root, [root])) zeroOk++;
+      else if (firstFail.length < 5) firstFail.push(`consistency-from-zero(${n})`);
+    }
+    const rows = [
+      ["small-trees-inclusion", incOk, 2080],
+      ["small-trees-inclusion-tampered", incTamperOk, incTampered],
+      ["small-trees-consistency", conOk, 2080],
+      ["small-trees-consistency-tampered", conTamperOk, conTampered],
+      ["small-trees-consistency-wrong-old-root", wrongOldOk, 2080],
+      ["small-trees-consistency-from-zero", zeroOk, 64],
+    ];
+    for (const [name, got, want] of rows) {
+      const ok = got === want;
+      console.log(`${ok ? "PASS" : "FAIL"}  ${name}: ${got} of ${want}${ok ? "" : ` (first: ${firstFail.join(", ")})`}`);
+      if (!ok) bad++;
+    }
+  }
 }
 
 process.exit(bad ? 1 : 0);

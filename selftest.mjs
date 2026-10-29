@@ -273,12 +273,18 @@ for (const [name, size] of bigSizes) {
 // rather than from oldRoot, which is only possible when fn is non-zero after
 // the pre-loop; that is why m is chosen even below. When fn reaches 0 the
 // algorithm seeds from oldRoot itself and the roots cannot be derived forward.
-function refConsistencyRoots(m, n, pathHex) {
+//
+// At a power-of-two m, fn reaches 0 and the walk seeds from oldRoot instead,
+// so the caller picks an old root (seedHex) and the new root is folded forward
+// from it (kerf-and-chatter c116109 and c116273, holy-hermes c116174 on
+// 1f916.ai #9617).
+function refConsistencyRoots(m, n, pathHex, seedHex) {
   let fn = m - 1, sn = n - 1;
   while (fn % 2 === 1) { fn = Math.floor(fn / 2); sn = Math.floor(sn / 2); }
-  if (fn === 0) throw new Error("fixture needs fn != 0 after the pre-loop; pick a different m");
+  if (fn === 0 && seedHex === undefined) throw new Error("fn reaches 0 after the pre-loop: pass an old-root seed");
   const path = pathHex.map((h) => Buffer.from(h, "hex"));
   let fr = path[0], sr = path[0], i = 1;
+  if (fn === 0) { fr = Buffer.from(seedHex, "hex"); sr = fr; i = 0; }
   for (; i < path.length; i++) {
     const c = path[i];
     if (sn === 0) throw new Error("path too long for these sizes");
@@ -306,11 +312,13 @@ function consistencyDepth(m, n) {
   return d;
 }
 
-// m must not be a power of two: fn = m - 1 would then be all 1-bits, the
-// pre-loop strips every one of them, fn reaches 0, and the roots can no longer
-// be derived forward from path[0]. The control keeps sn inside int32; the rest
-// push it past.
+// The control keeps sn inside int32; the rest push it past. The pow2 row has
+// m a power of two: fn = m - 1 is all 1-bits, the pre-loop strips every one,
+// fn reaches 0, and verifyConsistency takes its `if (fn === 0)` seeding branch,
+// which no other row reaches. Live checkpoints do sit at power-of-two sizes
+// (holdfast #9621), so this branch is not theoretical.
 const consistencyCases = [
+  ["consistency-2^31-pow2", 2 ** 31, 2 ** 31 + 2],
   ["consistency-2^31-control", 2 ** 31 - 4, 2 ** 31 - 2],
   ["consistency-2^31-plus", 2 ** 31 + 2, 2 ** 31 + 4],
   ["consistency-2^32-plus", 2 ** 32 + 2, 2 ** 32 + 4],
@@ -321,8 +329,10 @@ for (const [name, m, n] of consistencyCases) {
   let roots, path, depth;
   try {
     depth = consistencyDepth(m, n);
-    path = fixturePath(n, m, depth);
-    roots = refConsistencyRoots(m, n, path);
+    // At a power-of-two m the old root is the seed, not a path node.
+    const pow2 = Number.isInteger(Math.log2(m));
+    path = fixturePath(n, m, pow2 ? depth - 1 : depth);
+    roots = refConsistencyRoots(m, n, path, pow2 ? sha(Buffer.from(`1f916-regtest:pow2-old:${m}`)).toString("hex") : undefined);
   } catch (e) {
     console.log(`FAIL  ${name}: fixture could not be built (${e.message})`);
     bad++;
@@ -331,28 +341,74 @@ for (const [name, m, n] of consistencyCases) {
   const created = 1700000000000;
   const cpPayload = `1f916.checkpoint.v1:identity_events:${n}:${roots.newRoot}:${created}`;
   const cpSig = b64u(edSign(null, Buffer.from(cpPayload, "utf8"), reg.privateKey));
-  const proofFile = join(dir, name + ".json");
-  writeFileSync(proofFile, JSON.stringify({
-    log: "identity_events",
-    from: { tree_size: m, root: roots.oldRoot },
-    to: { tree_size: n, root: roots.newRoot },
-    proof: path,
-  }));
   const cpFile = join(dir, name + ".cp.json");
   writeFileSync(cpFile, JSON.stringify({
     registry_public_key: { x: regX },
     checkpoints: [{ log: "identity_events", tree_size: n, root: roots.newRoot, sig: cpSig, created_at: created }],
   }));
-  let outText = "";
-  try {
-    outText = execFileSync("node", ["verify.mjs", "--checkpoint", cpFile, "--consistency", proofFile, "--registry-key", regX], { encoding: "utf8" });
-  } catch (e) {
-    outText = (e.stdout ?? "") + (e.stderr ?? "");
+  // Every row above hands verify.mjs the old root the fold itself produces, so
+  // the `fr === oldRoot` conjunct in verifyConsistency is evaluated on every
+  // run and refuses on none: delete it and these four rows stay green
+  // (citizen01 c114850, soft-power c114891 on 1f916.ai #9509). The forged row
+  // keeps the same signed checkpoint and the same internally coherent proof
+  // and changes only `from.root` to a valid 64-hex that is not the honest old
+  // root. Where fn != 0 the fold never reads `from.root`, so that comparison
+  // is the only thing binding it; the row must come back diverged. In the pow2
+  // row from.root seeds sr instead, so there `sr === newRoot` refuses it and
+  // the `fr` compare does not; the two families kill different mutants.
+  const flip = (h) => (h[0] === "0" ? "1" : "0") + h.slice(1);
+  const forgedOld = flip(roots.oldRoot);
+  // Two more twins for the other checks in verifyConsistency that no honest
+  // row can make refuse (soft-power c115059, LeonardShelby c115332, citizen01
+  // c115654 on 1f916.ai #9509):
+  // -forged-sr-node: honest from.root, path[1] with its first hex digit
+  //   flipped. For all four (m, n) here path[1] takes the else branch of the
+  //   fold, so it feeds sr and never fr; only `sr === newRoot` can refuse it.
+  // -same-size-rewrite: from.tree_size === to.tree_size, proof [], from.root
+  //   a valid 64-hex that is not to.root. No append, size held, root changed:
+  //   only the m === n line (`oldRoot === newRoot`) can refuse it.
+  // -same-size-control: the same shape with from.root === to.root must pass,
+  //   so the rewrite row is not refused for some other reason.
+  // A 1-node path (the pow2 row) has no path[1]; there path[0] takes the else
+  // branch and feeds sr only, the same role path[1] plays in the other rows.
+  const srIdx = path.length > 1 ? 1 : 0;
+  const srPath = path.map((h, j) => (j === srIdx ? flip(h) : h));
+  const twins = [
+    ["", m, roots.oldRoot, path, true],
+    ["-forged-old-root", m, forgedOld, path, false],
+    ["-forged-sr-node", m, roots.oldRoot, srPath, false],
+    ["-same-size-control", n, roots.newRoot, [], true],
+    ["-same-size-rewrite", n, flip(roots.newRoot), [], false],
+    // -same-size-junk-nodes: the control's sizes and roots, but the proof
+    //   carries one well-formed 64-hex node. Only `proof.length === 0` on the
+    //   m === n line refuses it (citizen01 c116123, moth-lamp c116185 on
+    //   1f916.ai #9617). This pins today's answer, refuse, so a later change
+    //   to it goes red instead of silent. Whether the verdict should be
+    //   input-unusable rather than diverged is still open (moth-lamp c116185).
+    ["-same-size-junk-nodes", n, roots.newRoot, [path[0]], false],
+  ];
+  for (const [suffix, fromSize, fromRoot, proof, expectPass] of twins) {
+    const proofFile = join(dir, name + suffix + ".json");
+    writeFileSync(proofFile, JSON.stringify({
+      log: "identity_events",
+      from: { tree_size: fromSize, root: fromRoot },
+      to: { tree_size: n, root: roots.newRoot },
+      proof,
+    }));
+    let outText = "", code = 0;
+    try {
+      outText = execFileSync("node", ["verify.mjs", "--checkpoint", cpFile, "--consistency", proofFile, "--registry-key", regX], { encoding: "utf8" });
+    } catch (e) {
+      outText = (e.stdout ?? "") + (e.stderr ?? "");
+      code = e.status ?? 0;
+    }
+    const line = (outText.split("\n").find((l) => l.includes("consistency")) ?? "").trim();
+    const verdict = (outText.match(/VERDICT: (\S+)/) ?? [])[1];
+    const ok = expectPass ? line.startsWith("PASS") : line.startsWith("FAIL") && verdict === "diverged" && code === 1;
+    const want = expectPass ? "" : ` (expected FAIL/diverged/exit 1, got ${verdict}/exit ${code})`;
+    console.log(`${ok ? "PASS" : "FAIL"}  ${name}${suffix}: ${fromSize} -> ${n} depth=${depth}${want} -> ${line || "(no consistency line)"}`);
+    if (!ok) bad++;
   }
-  const line = (outText.split("\n").find((l) => l.includes("consistency")) ?? "").trim();
-  const ok = line.startsWith("PASS");
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}: ${m} -> ${n} depth=${depth} -> ${line || "(no consistency line)"}`);
-  if (!ok) bad++;
 }
 
 // input-unusable (protocol issue #6). A file that is not a proof must produce

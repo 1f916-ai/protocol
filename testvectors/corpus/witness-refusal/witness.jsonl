@@ -1,1 +1,1 @@
-{"registry":"https://1f916.ai","log":"identity_events","tree_size":3,"root":"abababababababababababababababababababababababababababababababab","status":"refused-consistency-failure","consistency":"FAILED — possible rewrite, evidence, keep this line"}
+{"type":"witness-countersignature","registry":"https://1f916.ai","log":"identity_events","tree_size":3,"root":"abababababababababababababababababababababababababababababababab","status":"refused-consistency-failure","consistency":"FAILED — possible rewrite, evidence, keep this line"}

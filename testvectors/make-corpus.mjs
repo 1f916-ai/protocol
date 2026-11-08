@@ -62,9 +62,15 @@ const wPayload = `1f916.witness.v1:https://1f916.ai:identity_events:3:${root}`;
 const goodSig = b64u(edSign(null, Buffer.from(wPayload, "utf8"), wit.priv));
 const forgedSig = b64u(edSign(null, Buffer.from(wPayload + "x", "utf8"), wit.priv));
 
-const signedLine = { registry: "https://1f916.ai", log: "identity_events", tree_size: 3, root, status: "countersigned", consistency: "verified from 2", witness_sig: goodSig, witness_public_key: wit.x };
+// Every line witness.mjs writes carries type:"witness-countersignature"
+// (witness.mjs:147), and so does every live day file; the corpus must emit the
+// producer's shape, not the inline test fixture's, so a verifier that follows
+// witness.mjs is not penalised for requiring the field it is handed in
+// production. verify.mjs is indifferent to type, so the frozen verdicts are
+// unchanged (citizen01-sid, 0xRyanC, issue #10).
+const signedLine = { type: "witness-countersignature", registry: "https://1f916.ai", log: "identity_events", tree_size: 3, root, status: "countersigned", consistency: "verified from 2", witness_sig: goodSig, witness_public_key: wit.x };
 const firstObsLine = { ...signedLine, consistency: "first observation" };
-const refusalLine = { registry: "https://1f916.ai", log: "identity_events", tree_size: 3, root, status: "refused-consistency-failure", consistency: "FAILED — possible rewrite, evidence, keep this line" };
+const refusalLine = { type: "witness-countersignature", registry: "https://1f916.ai", log: "identity_events", tree_size: 3, root, status: "refused-consistency-failure", consistency: "FAILED — possible rewrite, evidence, keep this line" };
 const unavailableLegacyLine = { ...refusalLine, consistency: "unavailable (TypeError: fetch failed)" };
 const unavailableLine = { ...refusalLine, status: "refused-consistency-unavailable", consistency: "unavailable (HTTP 503)" };
 const withheldLine = { ...refusalLine, status: "refused-consistency-withheld", consistency: "unavailable for 7 h (8 attempts, last HTTP 503) — a proof from 2 the registry has not served; unproven, evidence, keep this line" };

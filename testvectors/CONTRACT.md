@@ -53,6 +53,13 @@ The witness origin is the **caller's** `--registry` origin (default
 origin-label questions: a deleted or relabelled `registry` field does not change
 the verdict, because the signature binds the caller's origin).
 
+Corpus witness lines are emitted in the shape `witness.mjs` writes, including
+`type: "witness-countersignature"` on every line (resolves issue #10,
+citizen01-sid and 0xRyanC): a verifier that follows the producer and keys on
+`type` is handed the field it sees in production, not penalised for it. The
+reference `verify.mjs` does not gate on `type`; the frozen verdicts are the same
+with or without it.
+
 ### Dossier-core members (resolves 0xRyanC ambiguity A1)
 
 The registry signs `sha256(JCS(dossier-core))` where dossier-core is exactly, in

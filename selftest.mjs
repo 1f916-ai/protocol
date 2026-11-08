@@ -477,6 +477,13 @@ for (const [name, m, n] of consistencyCases) {
     // The record holds a different root at the proof's `to` size: the registry
     // signed two trees for one size.
     ["consistency-two-roots-one-size", cpAt(n, otherRoot), signedEnd(reg, m, roots.oldRoot, created), signedEnd(reg, n, roots.newRoot, created), "diverged", "two trees for one size"],
+    // The two ends are checked by ONE expression, so a single case that signs
+    // both ends with the wrong key cannot say WHICH check is load-bearing:
+    // dropping fromSig alone, or toSig alone, leaves the row red and the suite
+    // green. These two isolate one end each — the fixture is otherwise an
+    // honest signed fold that passes, so only the named end is unbound.
+    ["consistency-from-end-not-registry-signed", cpAt(n, roots.newRoot), signedEnd(impostor, m, roots.oldRoot, created), signedEnd(reg, n, roots.newRoot, created), "diverged", "from size="],
+    ["consistency-to-end-not-registry-signed", cpAt(n, roots.newRoot), signedEnd(reg, m, roots.oldRoot, created), signedEnd(impostor, n, roots.newRoot, created), "diverged", "to size="],
   ];
   for (const [name, cpObj, from, to, want, mustSay] of cases) {
     const cpFile = join(dir, name + ".cp.json");

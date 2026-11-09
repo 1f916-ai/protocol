@@ -263,7 +263,15 @@ produces, and is reachable by renaming a log or deleting the witness's state
 REFUSAL line (refused-regression, refused-consistency-failure,
 registry_signature_invalid, refused-registry-key-changed) is evidence AGAINST
 the head it names and MUST fail the run, never be counted as corroboration
-because it happens to repeat the same values; (3) a witness MUST NOT verify
+because it happens to repeat the same values — with one exception: a witness
+that could not OBTAIN the consistency proof at all (the fetch threw or the
+registry returned an error, carried as status `refused-consistency-unavailable`,
+or on older witnesses as `refused-consistency-failure` whose `consistency`
+begins `unavailable (`) measured nothing about the head and is evidence NEITHER
+for nor against — it does not fail the run on its own. A proof the pinned head
+keeps unserved (`refused-consistency-withheld`) is NOT that case and remains a
+refusal, since withholding is a rewriting registry's only move; (3) a witness
+MUST NOT verify
 the registry's signature using a key the registry supplied in the same
 response — pin it, or trust it once, persist it, and refuse silent changes.
 A countersignature line MUST carry the checkpoint's `created_at` so a third

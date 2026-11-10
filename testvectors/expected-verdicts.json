@@ -1,0 +1,395 @@
+{
+  "corpus": "1f916-protocol two-stranger-gate frozen verdict corpus",
+  "generated_by": "testvectors/make-corpus.mjs (deterministic; re-run and git diff to check)",
+  "spec_version": "0.0-draft",
+  "pinned_commit": "28f7990f4e6a92d8c5561430bde6372962faf5f4",
+  "reference_verifier": "verify.mjs",
+  "canonicalization": "JCS over {null,bool,number,string,array,object}: object keys sorted, scalars via JSON.stringify, arrays recursive. See testvectors/CONTRACT.md.",
+  "signed_byte_boundaries": {
+    "checkpoint": "1f916.checkpoint.v1:<log>:<tree_size>:<root>:<created_at>  (UTF-8, Ed25519 by the registry key)",
+    "witness": "1f916.witness.v1:<caller-origin>:<log>:<tree_size>:<root>  (UTF-8, Ed25519 by the witness key)",
+    "dossier": "1f916.record.v1:<hex sha256(JCS(dossier-core))>  (UTF-8, Ed25519 by the registry key)"
+  },
+  "dossier_core_members": [
+    "protocol",
+    "handle",
+    "citizen_id",
+    "model",
+    "since",
+    "keys",
+    "bindings",
+    "events",
+    "events_total",
+    "events_returned",
+    "events_has_more",
+    "attestations_about",
+    "checkpoint",
+    "witnesses",
+    "next_events_since (optional, included only when present)"
+  ],
+  "registry_public_key_x": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+  "witness_public_key_x": "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA",
+  "exit_status_by_verdict": {
+    "witnessed": 0,
+    "consistent-unwitnessed": 0,
+    "unanchored": 0,
+    "diverged": 1,
+    "witness-unusable": 3,
+    "input-unusable": 4
+  },
+  "vectors": [
+    {
+      "name": "dossier-forged-unpinned",
+      "kind": "dossier",
+      "files": {
+        "dossier": "dossier.json"
+      },
+      "args": [],
+      "expected_verdict": "unanchored",
+      "expected_exit": 0
+    },
+    {
+      "name": "dossier-forged-pinned",
+      "kind": "dossier",
+      "files": {
+        "dossier": "dossier.json"
+      },
+      "args": [
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "diverged",
+      "expected_exit": 1
+    },
+    {
+      "name": "dossier-real-unpinned",
+      "kind": "dossier",
+      "files": {
+        "dossier": "dossier.json"
+      },
+      "args": [],
+      "expected_verdict": "unanchored",
+      "expected_exit": 0
+    },
+    {
+      "name": "dossier-real-pinned",
+      "kind": "dossier",
+      "files": {
+        "dossier": "dossier.json"
+      },
+      "args": [
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "consistent-unwitnessed",
+      "expected_exit": 0
+    },
+    {
+      "name": "dossier-short-array-pinned",
+      "kind": "dossier",
+      "files": {
+        "dossier": "dossier.json"
+      },
+      "args": [
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "diverged",
+      "expected_exit": 1
+    },
+    {
+      "name": "unsigned-copy",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "consistent-unwitnessed",
+      "expected_exit": 0
+    },
+    {
+      "name": "unsigned-copy-unanchored",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [],
+      "expected_verdict": "unanchored",
+      "expected_exit": 0
+    },
+    {
+      "name": "signed-valid-pinned",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA"
+      ],
+      "expected_verdict": "witnessed",
+      "expected_exit": 0
+    },
+    {
+      "name": "first-observation-pinned",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA",
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "consistent-unwitnessed",
+      "expected_exit": 0
+    },
+    {
+      "name": "witness-refusal",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "diverged",
+      "expected_exit": 1
+    },
+    {
+      "name": "refusal-beside-countersignature",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA",
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "diverged",
+      "expected_exit": 1
+    },
+    {
+      "name": "unavailable-legacy-beside-countersignature",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA",
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "witnessed",
+      "expected_exit": 0
+    },
+    {
+      "name": "unavailable-beside-countersignature",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA",
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "witnessed",
+      "expected_exit": 0
+    },
+    {
+      "name": "unavailable-alone",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA",
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "witness-unusable",
+      "expected_exit": 3
+    },
+    {
+      "name": "withheld-beside-countersignature",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA",
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "diverged",
+      "expected_exit": 1
+    },
+    {
+      "name": "witness-file-empty",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA",
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "witness-unusable",
+      "expected_exit": 3
+    },
+    {
+      "name": "witness-file-wrong-log",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA",
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "witness-unusable",
+      "expected_exit": 3
+    },
+    {
+      "name": "signed-valid-unpinned",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [],
+      "expected_verdict": "unanchored",
+      "expected_exit": 0
+    },
+    {
+      "name": "signed-wrong-pin",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      ],
+      "expected_verdict": "diverged",
+      "expected_exit": 1
+    },
+    {
+      "name": "signed-forged",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA"
+      ],
+      "expected_verdict": "diverged",
+      "expected_exit": 1
+    },
+    {
+      "name": "signed-origin-label-deleted",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA"
+      ],
+      "expected_verdict": "witnessed",
+      "expected_exit": 0
+    },
+    {
+      "name": "signed-origin-relabelled",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA"
+      ],
+      "expected_verdict": "witnessed",
+      "expected_exit": 0
+    },
+    {
+      "name": "signed-other-caller-origin",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA",
+        "--registry",
+        "https://other.example"
+      ],
+      "expected_verdict": "witness-unusable",
+      "expected_exit": 3
+    },
+    {
+      "name": "signed-unlabelled-other-caller-origin",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--witness-key",
+        "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA",
+        "--registry",
+        "https://other.example"
+      ],
+      "expected_verdict": "diverged",
+      "expected_exit": 1
+    },
+    {
+      "name": "wrong-root",
+      "kind": "witness",
+      "files": {
+        "checkpoint": "checkpoint.json",
+        "witness": "witness.jsonl"
+      },
+      "args": [
+        "--registry-key",
+        "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc"
+      ],
+      "expected_verdict": "diverged",
+      "expected_exit": 1
+    }
+  ]
+}

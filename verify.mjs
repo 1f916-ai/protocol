@@ -291,6 +291,15 @@ if (args.witness && cp) {
       // from the pinned head unserved for hours is the only move a rewriting
       // registry has, so it stays a refusal below.
       if (w.status === "refused-consistency-unavailable" || (w.status === "refused-consistency-failure" && typeof w.consistency === "string" && w.consistency.startsWith("unavailable ("))) {
+        // "No evidence" is only true when the line names THIS head's root. A
+        // line that could not fetch a proof but still carries a DIFFERENT root
+        // at this tree_size SAW a second root at this size — a split view —
+        // which the unobtained proof does not soften. That is a refusal of
+        // this head, exactly as refused-consistency-withheld is below, and
+        // must outweigh a countersignature (refused ranks above signedOk), so
+        // it cannot be filed as silence. A line with no root stays no evidence.
+        // (protocol issue #10)
+        if (typeof w.root === "string" && w.root !== row.root) { refused = w.status; continue; }
         unavailable = w.consistency ?? w.status;
         continue;
       }

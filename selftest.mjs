@@ -49,6 +49,12 @@ const unavailableLegacyLine = { ...refusalLine, consistency: "unavailable (TypeE
 const unavailableLine = { ...refusalLine, status: "refused-consistency-unavailable", consistency: "unavailable (HTTP 503)" };
 // Past the witness's withholding threshold the same silence is a refusal.
 const withheldLine = { ...refusalLine, status: "refused-consistency-withheld", consistency: "unavailable for 7 h (8 attempts, last HTTP 503) — a proof from 2 the registry has not served; unproven, evidence, keep this line" };
+// A could-not-fetch line is "no evidence" ONLY when it names this head's root.
+// One that carries a DIFFERENT root at the same tree_size saw the registry
+// sign two roots at one size — a split view — and the unobtained proof does
+// not soften that. It must count as divergence, not be discarded as silence
+// (protocol issue #10). Its root is a real 32-byte hex distinct from `root`.
+const splitUnavailableLine = { ...unavailableLine, root: root.replace(/.$/, (c) => (c === "f" ? "e" : "f")) };
 
 // --- the anchor axis: a dossier is only as good as the key that checked it
 function jcs(v) {
@@ -118,6 +124,10 @@ const cases = [
   ["unavailable-beside-countersignature", [signedLine, unavailableLine], "witnessed", ["--witness-key", witX, "--registry-key", regX]],
   ["unavailable-alone", [unavailableLine], "witness-unusable", ["--witness-key", witX, "--registry-key", regX]],
   ["withheld-beside-countersignature", [signedLine, withheldLine], "diverged", ["--witness-key", witX, "--registry-key", regX]],
+  // A could-not-fetch line that names a DIFFERENT root at this tree_size is a
+  // split view, not silence: it must outweigh the countersignature and read
+  // diverged, even though its own proof was never served (protocol issue #10).
+  ["split-view-unavailable-beside-countersignature", [signedLine, splitUnavailableLine], "diverged", ["--witness-key", witX, "--registry-key", regX]],
   // A witness file supplied that yields nothing applicable is NOT the same as
   // supplying no witness at all. Both used to print consistent-unwitnessed and
   // exit 0, so a citizen who ran the documented command during the daily

@@ -265,6 +265,59 @@ if (failures > 0) {
 return failures;
 }
 
+// The parser at the top reads flags in pairs from position 2, so a bare flag such as
+// --selftest shifts every pair after it. Where a mode must know what the
+// caller typed whatever the order, it asks by name.
+const flagValue = (name) => { const i = process.argv.indexOf(name); return i > -1 ? process.argv[i + 1] : undefined; };
+
+// --- --push <witness id>: tell the registry where this witness is -----------
+//
+//   node witness.mjs --registry https://1f916.ai --state ./witness-state --push <id>
+//
+// The loop above ends at a file. An operator who follows the README publishes
+// that file and registers the pointer, and GET /api/witnesses then shows
+// `countersigned: {identity_events: null, ledger: null}` for their row,
+// because nothing ever handed the registry a countersignature (issue #28: on
+// 2026-11-13, 2 of 15 rows had pushed). This mode is that step. It runs no
+// witness pass of its own: run it AFTER the file is public, so a registry
+// receipt never predates the public row it answers. Per log it reads the
+// newest line this witness wrote for this registry. A countersigned line is
+// posted as {log, tree_size, root, witness_sig} to
+// POST /api/witnesses/<id>/countersignatures and the registry's receipt is
+// appended to <state>/push-receipts.jsonl. A refusal is not posted, and
+// neither is anything older: the registry is not told about an earlier head
+// while this witness is refusing a newer one. A failed push is reported and
+// is never fatal. The witness's job is the file; the process exits 0.
+async function push(id) {
+  const logPath = join(stateDir, "countersignatures.jsonl");
+  if (!existsSync(logPath)) { console.error(`push: no ${logPath} yet, nothing to push`); return 0; }
+  const newest = new Map();
+  for (const l of readFileSync(logPath, "utf8").split("\n")) {
+    if (!l.trim()) continue;
+    let row;
+    try { row = JSON.parse(l); } catch { continue; }
+    if (row && typeof row.log === "string" && row.registry === registry) newest.set(row.log, row);
+  }
+  let failed = 0;
+  for (const [log, row] of newest) {
+    if (row.status !== "countersigned") { console.error(`push: ${log}: newest line is ${row.status}, nothing pushed`); continue; }
+    const body = JSON.stringify({ log: row.log, tree_size: Number(row.tree_size), root: row.root, witness_sig: row.witness_sig });
+    let why = null;
+    try {
+      const res = await fetch(`${registry}/api/witnesses/${id}/countersignatures`, { method: "POST", headers: { "content-type": "application/json" }, body, signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) why = `HTTP ${res.status}`;
+      else {
+        appendFileSync(join(stateDir, "push-receipts.jsonl"), JSON.stringify(await res.json()) + "\n");
+        console.log(`push: ${log}: size=${row.tree_size} accepted`);
+      }
+    } catch (e) {
+      why = String(e).slice(0, 80);
+    }
+    if (why !== null) { failed++; console.error(`push: ${log}: FAILED (${why}) — not fatal, the countersignature file is unaffected`); }
+  }
+  return failed;
+}
+
 // --- --selftest: the consistency fixture, in-process, no socket -------------
 // `selftest.mjs` cannot reach witness.mjs (it never runs it), so the witness's
 // own consistency checks were outside the suite until this mode existed. It
@@ -333,11 +386,35 @@ return failures;
 // wrong because it assumed the served path was well formed — a registry that is
 // itself the forger needs no hash collision.
 async function selftest() {
-  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { mkdtempSync, rmSync, readdirSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
-  const dir = args.state ?? mkdtempSync(`${tmpdir()}/witness-selftest-`);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
+  const { resolve } = await import("node:path");
+  // This mode works only in directories it made. It used to take
+  // `args.state ?? mkdtempSync(...)` and empty that directory first, so
+  // `--state ./witness-state --selftest`, the natural way to try the mode on a
+  // deployed witness, emptied the operator's state directory and replaced the
+  // witness key with a new one (issue #28). --state is now ignored here.
+  //
+  // Section C (checked at the end) keeps it that way. `watched` is the
+  // caller's --state when one was typed, in any position; otherwise a decoy
+  // directory holding a key file, handed to this run AS args.state so that the
+  // old line, put back, would empty it. Nothing here writes to `watched`; it
+  // is read before and after, and the mode fails if an entry is gone, the key
+  // changed, or a path that did not exist was created.
+  const callerState = args.state ?? flagValue("--state");
+  const watched = callerState ?? mkdtempSync(`${tmpdir()}/witness-selftest-decoy-`);
+  if (callerState === undefined) {
+    writeFileSync(join(watched, "witness-key.json"), JSON.stringify({ note: "decoy: the selftest must leave this file alone" }));
+    writeFileSync(join(watched, "countersignatures.jsonl"), "");
+    args.state = watched;
+  }
+  const fingerprint = (p) => {
+    if (!existsSync(p)) return null;
+    const k = join(p, "witness-key.json");
+    return { names: readdirSync(p).sort(), key: existsSync(k) ? sha256(readFileSync(k)).toString("hex") : null };
+  };
+  const before = fingerprint(watched);
+  const dir = mkdtempSync(`${tmpdir()}/witness-selftest-`);
   stateDir = dir;
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const keyX = publicKey.export({ format: "jwk" }).x;
@@ -499,7 +576,49 @@ async function selftest() {
   if (okB) console.log("selftest: PASS (pow2) — a genuine power-of-two extension countersigns, a forged one is refused, and the refusal does not stall the other log");
   else console.error("selftest: FAIL (pow2) — expected both countersigned at P, then " + LOG_A + " countersigned at P+2 and " + LOG_B + " refused with its state held at P; got " + JSON.stringify(rowsB));
 
-  return ok && okB ? 0 : 1;
+  // --- section D: --push, against a stub, in section B's directory ---------
+  // There the honest log's newest line is countersigned at P+2 and the forged
+  // log's newest line is a refusal. Three pushes: the registry accepts, the
+  // registry answers 500, the socket throws. Expected: exactly one POST per
+  // push that reaches the registry, to the countersignature route, carrying
+  // the honest log's newest head and its signature and nothing else; the
+  // refused log never posted; one receipt written; a failure counted and
+  // returned, never thrown.
+  const posts = [];
+  let pushAnswer = 200;
+  globalThis.fetch = async (url, opts) => {
+    posts.push({ url: String(url), method: opts?.method, body: opts?.body });
+    if (pushAnswer !== 200) return { ok: false, status: pushAnswer, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ received: JSON.parse(opts.body).log }) };
+  };
+  const pushedOk = await push("6");
+  pushAnswer = 500;
+  const pushed500 = await push("6");
+  globalThis.fetch = async () => { throw new Error("socket"); };
+  const pushedThrow = await push("6");
+  globalThis.fetch = prevFetch;
+  const honest = readFileSync(join(dirB, "countersignatures.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((l) => l.log === LOG_A).pop();
+  const wantBody = JSON.stringify({ log: LOG_A, tree_size: Q, root: R_HONEST, witness_sig: honest.witness_sig });
+  const receiptsPath = join(dirB, "push-receipts.jsonl");
+  const receipts = existsSync(receiptsPath) ? readFileSync(receiptsPath, "utf8").trim().split("\n") : [];
+  const okD = pushedOk === 0 && pushed500 === 1 && pushedThrow === 1
+    && posts.length === 2
+    && posts.every((p) => p.url === `${registry}/api/witnesses/6/countersignatures` && p.method === "POST" && p.body === wantBody)
+    && receipts.length === 1 && JSON.parse(receipts[0]).received === LOG_A;
+  if (okD) console.log("selftest: PASS (push) — the newest countersigned head is posted once, a refused log is not posted, and a failed push is counted, not thrown");
+  else console.error("selftest: FAIL (push) — got " + JSON.stringify({ pushedOk, pushed500, pushedThrow, posts, receipts }));
+
+  // --- section C: the caller's --state (or the decoy standing in for it) ----
+  const after = fingerprint(watched);
+  const own = [dir, dirB].every((d) => resolve(d) !== resolve(watched));
+  const okC = own && (before === null
+    ? after === null
+    : after !== null && before.names.every((n) => after.names.includes(n)) && before.key === after.key);
+  if (okC) console.log(`selftest: PASS (state) — ${callerState === undefined ? "a decoy passed as --state" : "the --state directory"} kept every entry and its key; the mode worked only in directories it made`);
+  else console.error("selftest: FAIL (state) — the mode touched a state directory it did not make: " + JSON.stringify({ watched, before, after, dir, dirB }));
+  if (callerState === undefined) rmSync(watched, { recursive: true, force: true });
+
+  return ok && okB && okC && okD ? 0 : 1;
 }
 
 // A bare flag is accepted (`node witness.mjs --selftest`): args above is a
@@ -508,5 +627,15 @@ const SELFTEST = process.argv.includes("--selftest");
 
 if (SELFTEST) {
   process.exit(await selftest());
+}
+if (process.argv.includes("--push")) {
+  const id = flagValue("--push");
+  if (!/^[0-9]+$/.test(id ?? "")) {
+    console.error("usage: node witness.mjs --registry <url> --state <dir> --push <witness id>  (your id is the one GET /api/witnesses lists for your row)");
+    process.exit(2);
+  }
+  const failed = await push(id);
+  if (failed > 0) console.error(`push: ${failed} push(es) failed. Exit status is 0 on purpose: a failed push never fails a witness.`);
+  process.exit(0);
 }
 process.exit((await run()) > 0 ? 1 : 0);

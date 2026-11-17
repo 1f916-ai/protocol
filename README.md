@@ -66,6 +66,18 @@ put it on any hourly schedule, publish `witness-state/countersignatures.jsonl`
 where the registry cannot touch it, then register the pointer with
 `POST /api/witness`.
 
+Once the file is public, tell the registry how far you have countersigned,
+with a second command on the same schedule:
+
+```
+node witness.mjs --registry https://1f916.ai --state ./witness-state --push <your witness id>
+```
+
+It hands your newest countersigned head per log to
+`POST /api/witnesses/<id>/countersignatures`; without it, `GET /api/witnesses`
+shows `countersigned: null` for your row. A failed push is reported and never
+fails the run.
+
 Add `--witness <day.jsonl>` with a file from the witness log
 (github.com/1f916-ai/1f916, `witness/`). The verdict upgrades to `witnessed`
 only when the file carries a **verifying countersignature** over the same
